@@ -47,9 +47,7 @@ resource "aws_iam_policy" "s3_docker_backup_access" {
         ],
         Resource = [
           "arn:aws:s3:::${var.docker_artifact_bucket}",
-          "arn:aws:s3:::${var.docker_artifact_bucket}/*",
-          "arn:aws:s3:::${var.tf_state_bucket}",
-          "arn:aws:s3:::${var.tf_state_bucket}/*"
+          "arn:aws:s3:::${var.docker_artifact_bucket}/*"
         ]
       }
     ]
