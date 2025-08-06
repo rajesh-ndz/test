@@ -1,0 +1,6 @@
+environment = "btl-dev"
+region = "eu-west-1"
+ssm_param_name         = "/idlms/shared/btl-dev/.env"
+ssm_param_description  = "Shared environment variables for IDLMS in btl-dev"
+ssm_param_app_tag      = "idlms"
+app_env_content         = ""
