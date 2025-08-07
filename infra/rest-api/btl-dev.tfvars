@@ -17,5 +17,5 @@ logging_level        = "INFO"
 data_trace_enabled   = false
 
 api_port = 4000
-tf_state_bucket  = "btl-dev-btl-idlms-backend-api-tfstate"
+tf_state_bucket  = "btl-dev-btl-idlms-backend-api-tfstate-544607260651"
 tf_state_region  = "eu-west-1"
