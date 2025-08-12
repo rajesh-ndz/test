@@ -34,8 +34,8 @@ public_subnets = {
 }
 
 private_subnets = {
-  cidrs_blocks         = ["10.121.10.0/24", "10.121.11.0/24", "10.121.12.0/24", "10.121.13.0/24"]
-  availability_zones   = ["ap-southeast-1a", "ap-southeast-1b", "ap-southeast-1c", "ap-southeast-1e"]
+  cidrs_blocks         = ["10.121.10.0/24", "10.121.11.0/24", "10.121.12.0/24"]
+  availability_zones   = ["ap-southeast-1a", "ap-southeast-1b", "ap-southeast-1c"]
   subnets_name_prefix  = "dev-private"
   route_table_name     = "dev-private"
   routes               = []
