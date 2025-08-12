@@ -1,7 +1,7 @@
-data "aws_caller_identity" "current" {}
+# data "aws_caller_identity" "current" {}
 
 resource "aws_s3_bucket" "artifact" {
-  bucket = "idlms-${var.environment}-built-artifact-${data.aws_caller_identity.current.account_id}"
+  bucket = "test-s3-idlmreplatforming-artifact"
 
   tags = {
     Name        = "IDLMS ${var.environment} Artifact Bucket"
