@@ -1,4 +1,4 @@
-region               = "eu-west-1"
+region               = "ap-southeast-1"
 environment          = "dev"
 stage_name           = "dev-idms"
 log_retention_days   = 7
@@ -17,5 +17,5 @@ metrics_enabled      = true
 logging_level        = "INFO"
 data_trace_enabled   = false
 api_port = 4000
-tf_state_bucket  = "my-terraform-state-bckt4321"
-tf_state_region  = "eu-west-1"
+tf_state_bucket  = "test-s3-idlmreplatforming-tfstate"
+tf_state_region  = "ap-southeast-1"

@@ -1,5 +1,5 @@
 environment = "dev"
-region = "eu-west-1"
+region = "ap-southeast-1"
 ssm_param_name         = "/idlms/shared/dev/.env"
 ssm_param_description  = "Shared environment variables for IDLMS in dev"
 ssm_param_app_tag      = "idlms"

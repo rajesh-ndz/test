@@ -13,7 +13,7 @@ on:
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
-  TF_BUCKET: ${{ github.event.inputs.ENV }}-btl-idlms-backend-api-tfstate-${{ secrets.AWS_ACCOUNT_ID }}
+  TF_BUCKET: test-s3-idlmreplatforming-tfstate
   TF_REGION: ${{ vars.AWS_REGION }}
  
 
@@ -50,7 +50,7 @@ jobs:
           echo "account_id=$ACCOUNT_ID" >> "$GITHUB_OUTPUT" 
 
       - name: Set dynamic backup bucket name
-        run: echo "BACKUP_BUCKET=idlms-${{ github.event.inputs.ENV }}-built-artifact-${{ steps.aws-account.outputs.account_id }}" >> $GITHUB_ENV              
+        run: echo "BACKUP_BUCKET=test-s3-idlmreplatforming-artifact" >> $GITHUB_ENV
 
       - name: Terraform Apply VPC
         if: github.event_name == 'workflow_dispatch' || contains(join(github.event.commits.*.modified), 'infra/')
