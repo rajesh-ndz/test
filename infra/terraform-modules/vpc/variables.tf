@@ -11,6 +11,12 @@ variable "common_tags" {
 variable "region" {
   description = "AWS region"
   type        = string
+  validation {
+    condition = contains([
+      "ap-southeast-1"  # ✅ add this
+    ], var.region)
+    error_message = "Invalid AWS Region: ${var.region}"
+  }
 }
 
 variable "instance_tenancy" {
