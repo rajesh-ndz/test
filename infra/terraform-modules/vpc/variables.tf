@@ -9,8 +9,15 @@ variable "common_tags" {
 }
 
 variable "region" {
-  description = "AWS region"
-  type        = string
+  type = string
+  validation {
+    condition = contains([
+      "us-east-1", "us-east-2", "us-west-2",
+      "eu-west-1", "eu-central-1",
+      "ap-south-1", "ap-southeast-1", "ap-southeast-2"
+    ], var.region)
+    error_message = "Invalid AWS Region: ${var.region}"
+  }
 }
 
 variable "instance_tenancy" {
@@ -62,10 +69,10 @@ variable "nat_gateway_name" {
 ###Private App Subnets###
 variable "private_subnets" {
   type = object({
-    routes                   = list(any)
-    cidrs_blocks             = list(string)
-    subnets_name_prefix      = string
-    route_table_name         = string
+    routes              = list(any)
+    cidrs_blocks        = list(string)
+    subnets_name_prefix = string
+    route_table_name    = string
   })
 }
 
@@ -73,11 +80,11 @@ variable "private_subnets" {
 ###Public Subnets###
 variable "public_subnets" {
   type = object({
-    routes                   = list(any)
-    cidrs_blocks             = list(string)
-    subnets_name_prefix      = string
-    map_public_ip_on_launch  = bool
-    route_table_name         = string
+    routes                  = list(any)
+    cidrs_blocks            = list(string)
+    subnets_name_prefix     = string
+    map_public_ip_on_launch = bool
+    route_table_name        = string
   })
 }
 

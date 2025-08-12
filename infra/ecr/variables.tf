@@ -1,5 +1,5 @@
 variable "environment" {
-  type    = string
+  type = string
 }
 
 variable "region" {
@@ -8,13 +8,13 @@ variable "region" {
 }
 
 variable "image_tag_mutability" {
-  type        = string
+  type = string
 }
 
 variable "scan_on_push" {
-  type        = bool
+  type = bool
 }
 
 variable "encryption_type" {
-  type        = string
+  type = string
 }

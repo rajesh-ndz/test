@@ -41,7 +41,7 @@ variable "lb_egress_roles" {
 variable "environment" {
   type        = string
   description = "Environment name (e.g., dev, stage, prod)"
- 
+
 }
 
 variable "region" {

@@ -14,7 +14,7 @@ resource "null_resource" "ensure_log_group_deleted" {
 
 
 resource "aws_cloudwatch_log_group" "docker_api" {
-  depends_on         = [null_resource.ensure_log_group_deleted]
+  depends_on        = [null_resource.ensure_log_group_deleted]
   name              = var.docker_log_group_name
   retention_in_days = var.retention_in_days
 
@@ -60,13 +60,13 @@ resource "aws_s3_bucket_policy" "nlb_logs_policy" {
     Version = "2012-10-17",
     Statement = [
       {
-        Sid       = "AllowELBLogging",
-        Effect    = "Allow",
+        Sid    = "AllowELBLogging",
+        Effect = "Allow",
         Principal = {
           Service = "logdelivery.elasticloadbalancing.amazonaws.com"
         },
-        Action    = "s3:PutObject",
-        Resource  = "${aws_s3_bucket.nlb_logs[0].arn}/${var.access_logs_prefix}/AWSLogs/${data.aws_caller_identity.current.account_id}/*",
+        Action   = "s3:PutObject",
+        Resource = "${aws_s3_bucket.nlb_logs[0].arn}/${var.access_logs_prefix}/AWSLogs/${data.aws_caller_identity.current.account_id}/*",
         Condition = {
           StringEquals = {
             "aws:SourceAccount" = data.aws_caller_identity.current.account_id
@@ -96,11 +96,11 @@ resource "aws_ssm_parameter" "docker_logs_config" {
         files = {
           collect_list = [
             {
-              file_path         = var.docker_log_file_path,
-              log_group_name    = var.docker_log_group_name,
-              log_stream_name   = var.log_stream_name,
-              timezone          = var.timezone,
-#              auto_create_group = false
+              file_path       = var.docker_log_file_path,
+              log_group_name  = var.docker_log_group_name,
+              log_stream_name = var.log_stream_name,
+              timezone        = var.timezone,
+              #              auto_create_group = false
             }
           ]
         }

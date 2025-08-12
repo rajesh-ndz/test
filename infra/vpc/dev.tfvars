@@ -1,78 +1,78 @@
 ###VPC###
-environment = "dev"
-region      = "ap-southeast-1"
+environment          = "dev"
+region               = "ap-southeast-1"
 ec2_ssm_profile_name = "ec2_ssm_profile-dev"
 ec2_ssm_role_name    = "dev-ec2_ssm_role"
 tf_state_bucket      = "test-s3-idlmreplatforming-tfstate"
 ami_id               = "ami-0b8607d2721c94a77" #using singapure region AMI
-app_ports = [4000, 4001, 4002]
+app_ports            = [4000, 4001, 4002]
 
 docker_artifact_bucket = "test-s3-idlmreplatforming-artifact"
-enable_dns_support   = true
-enable_dns_hostnames = true
-vpc_name             = "dev-idlms-vpc"
-vpc_cidr             = "10.121.0.0/16"
+enable_dns_support     = true
+enable_dns_hostnames   = true
+vpc_name               = "dev-idlms-vpc"
+vpc_cidr               = "10.121.0.0/16"
 
 common_tags = {
-  "Owner"      = "IDLMS"
-  "Project"    = "Terraform VPC"
-  "Environment"= "dev"
+  "Owner"       = "IDLMS"
+  "Project"     = "Terraform VPC"
+  "Environment" = "dev"
 }
 
-internet_gateway_name = "dev-idlms-igw"
+internet_gateway_name      = "dev-idlms-igw"
 total_nat_gateway_required = 3
 eip_for_nat_gateway_name   = "dev-idlms-eip"
 nat_gateway_name           = "dev-idlms-ngw"
 
 public_subnets = {
-  cidrs_blocks         = ["10.121.0.0/24", "10.121.1.0/24", "10.121.2.0/24"]
-  availability_zones   = ["ap-southeast-1a", "ap-southeast-1b", "ap-southeast-1c"]
-  subnets_name_prefix  = "dev-public"
-  route_table_name     = "dev-public"
+  cidrs_blocks            = ["10.121.0.0/24", "10.121.1.0/24", "10.121.2.0/24"]
+  availability_zones      = ["ap-southeast-1a", "ap-southeast-1b", "ap-southeast-1c"]
+  subnets_name_prefix     = "dev-public"
+  route_table_name        = "dev-public"
   map_public_ip_on_launch = true
-  routes               = []
+  routes                  = []
 }
 
 private_subnets = {
-  cidrs_blocks         = ["10.121.10.0/24", "10.121.11.0/24", "10.121.12.0/24"]
-  availability_zones   = ["ap-southeast-1a", "ap-southeast-1b", "ap-southeast-1c"]
-  subnets_name_prefix  = "dev-private"
-  route_table_name     = "dev-private"
-  routes               = []
+  cidrs_blocks        = ["10.121.10.0/24", "10.121.11.0/24", "10.121.12.0/24"]
+  availability_zones  = ["ap-southeast-1a", "ap-southeast-1b", "ap-southeast-1c"]
+  subnets_name_prefix = "dev-private"
+  route_table_name    = "dev-private"
+  routes              = []
 }
 
 
 private_lb_subnets = {
-  cidrs_blocks         = ["10.121.15.0/26", "10.121.15.64/26", "10.121.15.128/26"]
-  availability_zones   = ["ap-southeast-1a", "ap-southeast-1b", "ap-southeast-1c"]
-  subnets_name_prefix  = "dev-lb"
-  route_table_name     = "dev-lb"
-  routes               = []
+  cidrs_blocks        = ["10.121.15.0/26", "10.121.15.64/26", "10.121.15.128/26"]
+  availability_zones  = ["ap-southeast-1a", "ap-southeast-1b", "ap-southeast-1c"]
+  subnets_name_prefix = "dev-lb"
+  route_table_name    = "dev-lb"
+  routes              = []
 }
 
 private_app_subnets = {
-  cidrs_blocks         = ["10.121.16.0/22", "10.121.20.0/22", "10.121.24.0/22"]
-  availability_zones   = ["ap-southeast-1a", "ap-southeast-1b", "ap-southeast-1c"]
-  subnets_name_prefix  = "dev-app"
- route_table_name     = "dev-app"
-  routes               = []
+  cidrs_blocks        = ["10.121.16.0/22", "10.121.20.0/22", "10.121.24.0/22"]
+  availability_zones  = ["ap-southeast-1a", "ap-southeast-1b", "ap-southeast-1c"]
+  subnets_name_prefix = "dev-app"
+  route_table_name    = "dev-app"
+  routes              = []
 }
 
 private_data_subnets = {
-  cidrs_blocks         = ["10.121.40.0/24", "10.121.41.0/24", "10.121.42.0/24"]
-  availability_zones   = ["ap-southeast-1a", "ap-southeast-1b", "ap-southeast-1c"]
-  subnets_name_prefix  = "dev-data"
-  route_table_name     = "dev-data"
-  routes               = []
-  is_public            = true
+  cidrs_blocks        = ["10.121.40.0/24", "10.121.41.0/24", "10.121.42.0/24"]
+  availability_zones  = ["ap-southeast-1a", "ap-southeast-1b", "ap-southeast-1c"]
+  subnets_name_prefix = "dev-data"
+  route_table_name    = "dev-data"
+  routes              = []
+  is_public           = true
 }
 
 private_services_subnets = {
-  cidrs_blocks         = ["10.121.254.0/26", "10.121.254.64/26", "10.121.254.128/26"]
-  availability_zones   = ["ap-southeast-1a", "ap-southeast-1b", "ap-southeast-1c"]
-  subnets_name_prefix  = "dev-service"
-  route_table_name     = "dev-service"
-  routes               = []
+  cidrs_blocks        = ["10.121.254.0/26", "10.121.254.64/26", "10.121.254.128/26"]
+  availability_zones  = ["ap-southeast-1a", "ap-southeast-1b", "ap-southeast-1c"]
+  subnets_name_prefix = "dev-service"
+  route_table_name    = "dev-service"
+  routes              = []
 }
 
 ec2_tags = {

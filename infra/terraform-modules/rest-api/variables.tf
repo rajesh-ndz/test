@@ -62,17 +62,17 @@ variable "metrics_enabled" {
 variable "logging_level" {
   description = "Logging level for API Gateway stage"
   type        = string
-  
+
 }
 
 variable "data_trace_enabled" {
   description = "Enable full data trace logging for API Gateway stage"
   type        = bool
- 
+
 }
 
 variable "api_port" {
   description = "Port number used to connect to the backend service via NLB"
   type        = number
- 
+
 }

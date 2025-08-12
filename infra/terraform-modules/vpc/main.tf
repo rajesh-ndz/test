@@ -20,24 +20,24 @@ resource "aws_eip" "nat_gateway" {}
 # NAT Gateway for Private Subnets
 resource "aws_nat_gateway" "nat" {
   allocation_id = aws_eip.nat_gateway.id
-  subnet_id     = aws_subnet.public_subnets[0].id  # NAT placed in first public subnet
+  subnet_id     = aws_subnet.public_subnets[0].id # NAT placed in first public subnet
 
   tags = merge(var.common_tags, { Name = var.nat_gateway_name })
 }
 
 resource "aws_subnet" "public_subnets" {
-  count = length(var.public_subnets["cidrs_blocks"])
-  vpc_id            = aws_vpc.vpc.id
-  cidr_block        = element(var.public_subnets["cidrs_blocks"], count.index)
+  count                   = length(var.public_subnets["cidrs_blocks"])
+  vpc_id                  = aws_vpc.vpc.id
+  cidr_block              = element(var.public_subnets["cidrs_blocks"], count.index)
   map_public_ip_on_launch = true
-  tags = merge(var.common_tags, { Name = "Public Subnet ${count.index + 1}" })
+  tags                    = merge(var.common_tags, { Name = "Public Subnet ${count.index + 1}" })
 }
 
 resource "aws_subnet" "private_subnets" {
-  count = length(var.private_subnets["cidrs_blocks"])
+  count      = length(var.private_subnets["cidrs_blocks"])
   vpc_id     = aws_vpc.vpc.id
   cidr_block = element(var.private_subnets["cidrs_blocks"], count.index)
-  tags = merge(var.common_tags, { Name = "Private Subnet ${count.index + 1}" })
+  tags       = merge(var.common_tags, { Name = "Private Subnet ${count.index + 1}" })
 }
 
 

@@ -1,11 +1,11 @@
-tf_state_bucket = "test-s3-idlmreplatforming-tfstate"
-tf_state_region  = "ap-southeast-1"
-region          = "ap-southeast-1"
-environment     = "dev"
+tf_state_bucket    = "test-s3-idlmreplatforming-tfstate"
+tf_state_region    = "ap-southeast-1"
+region             = "ap-southeast-1"
+environment        = "dev"
 load_balancer_type = "network"
 internal           = true
 target_port        = 4000
-additional_ports = [4000, 4001, 4002]
+additional_ports   = [4000, 4001, 4002]
 lb_create_sg       = true
 lb_egress_roles = [
   {
@@ -25,6 +25,6 @@ common_tags = {
   Project     = "IDMS"
 }
 
-ssm_param_name         = "/dev-cloudwatch/docker-config"
-ssm_tag_name           = "dev-docker-cloudwatch-config"
+ssm_param_name = "/dev-cloudwatch/docker-config"
+ssm_tag_name   = "dev-docker-cloudwatch-config"
 

@@ -1,12 +1,12 @@
-tf_state_bucket = "my-terraform-state-bckt4321"
-tf_state_region  = "eu-west-1"
-region          = "eu-west-1"
-environment     = "prod"
+tf_state_bucket    = "my-terraform-state-bckt4321"
+tf_state_region    = "eu-west-1"
+region             = "eu-west-1"
+environment        = "prod"
 load_balancer_type = "network"
 internal           = true
 target_port        = 4000
 lb_create_sg       = true
-additional_ports = [4000, 4001, 4002]
+additional_ports   = [4000, 4001, 4002]
 lb_egress_roles = [
   {
     description      = "Allow all outbound"
@@ -24,5 +24,5 @@ common_tags = {
   Environment = "prod"
   Project     = "IDMS"
 }
-ssm_param_name         = "/prod-cloudwatch/docker-config"
-ssm_tag_name           = "prod-docker-cloudwatch-config"
+ssm_param_name = "/prod-cloudwatch/docker-config"
+ssm_tag_name   = "prod-docker-cloudwatch-config"

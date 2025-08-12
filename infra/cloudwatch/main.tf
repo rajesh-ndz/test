@@ -3,7 +3,7 @@ module "cloudwatch" {
 
   environment                 = var.environment
   region                      = var.region
-  tf_state_bucket             = var.tf_state_bucket           
+  tf_state_bucket             = var.tf_state_bucket
   log_group_tag_name          = var.log_group_tag_name
   retention_in_days           = var.retention_in_days
   ssm_param_name              = var.ssm_param_name

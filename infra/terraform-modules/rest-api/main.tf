@@ -50,10 +50,10 @@ resource "aws_api_gateway_rest_api" "this" {
 }
 
 resource "aws_api_gateway_method" "root" {
-  rest_api_id   = aws_api_gateway_rest_api.this.id
-  resource_id   = aws_api_gateway_rest_api.this.root_resource_id
-  http_method   = "ANY"
-  authorization = "NONE"
+  rest_api_id      = aws_api_gateway_rest_api.this.id
+  resource_id      = aws_api_gateway_rest_api.this.root_resource_id
+  http_method      = "ANY"
+  authorization    = "NONE"
   api_key_required = false
 }
 
@@ -76,10 +76,10 @@ resource "aws_api_gateway_resource" "proxy" {
 }
 
 resource "aws_api_gateway_method" "proxy" {
-  rest_api_id   = aws_api_gateway_rest_api.this.id
-  resource_id   = aws_api_gateway_resource.proxy.id
-  http_method   = "ANY"
-  authorization = "NONE"
+  rest_api_id      = aws_api_gateway_rest_api.this.id
+  resource_id      = aws_api_gateway_resource.proxy.id
+  http_method      = "ANY"
+  authorization    = "NONE"
   api_key_required = false
 
   request_parameters = {
@@ -160,11 +160,11 @@ resource "aws_api_gateway_method_settings" "this" {
   method_path = "*/*"
 
   settings {
-     metrics_enabled         = var.metrics_enabled
-    logging_level           = var.logging_level
-    data_trace_enabled      = var.data_trace_enabled
-    throttling_burst_limit  = var.throttling_burst_limit
-    throttling_rate_limit   = var.throttling_rate_limit
+    metrics_enabled        = var.metrics_enabled
+    logging_level          = var.logging_level
+    data_trace_enabled     = var.data_trace_enabled
+    throttling_burst_limit = var.throttling_burst_limit
+    throttling_rate_limit  = var.throttling_rate_limit
 
   }
 
@@ -172,7 +172,7 @@ resource "aws_api_gateway_method_settings" "this" {
     aws_api_gateway_stage.default,
     aws_api_gateway_method.root,
     aws_api_gateway_method.proxy,
- 
+
   ]
 }
 

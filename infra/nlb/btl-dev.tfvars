@@ -1,12 +1,12 @@
-tf_state_bucket = "btl-dev-btl-idlms-backend-api-tfstate-544607260651"
-environment     = "btl-dev"
-region          = "eu-west-1"
-tf_state_region  = "eu-west-1"
+tf_state_bucket    = "btl-dev-btl-idlms-backend-api-tfstate-544607260651"
+environment        = "btl-dev"
+region             = "eu-west-1"
+tf_state_region    = "eu-west-1"
 load_balancer_type = "network"
 internal           = true
 target_port        = 4000
 lb_create_sg       = true
-additional_ports = [4000, 4001, 4002]
+additional_ports   = [4000, 4001, 4002]
 
 lb_egress_roles = [
   {
@@ -25,6 +25,6 @@ common_tags = {
   Environment = "btl-dev"
   Project     = "IDLMS"
 }
-ssm_param_name         = "/btl-dev-cloudwatch/docker-config"
-ssm_tag_name           = "btl-dev-docker-cloudwatch-config"
+ssm_param_name = "/btl-dev-cloudwatch/docker-config"
+ssm_tag_name   = "btl-dev-docker-cloudwatch-config"
 

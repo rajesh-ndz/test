@@ -4,7 +4,7 @@ resource "aws_ssm_parameter" "this" {
   type        = var.type
   value       = var.value
   overwrite   = false
-  tags = var.tags
+  tags        = var.tags
 
   lifecycle {
     ignore_changes = [value]

@@ -1,12 +1,12 @@
-tf_state_bucket = "stage-btl-idlms-backend-api-tfstate"
-environment     = "stage"
-region          = "eu-west-1"
-tf_state_region  = "eu-west-1"
+tf_state_bucket    = "stage-btl-idlms-backend-api-tfstate"
+environment        = "stage"
+region             = "eu-west-1"
+tf_state_region    = "eu-west-1"
 load_balancer_type = "network"
 internal           = true
 target_port        = 4000
 lb_create_sg       = true
-additional_ports = [4000, 4001, 4002]
+additional_ports   = [4000, 4001, 4002]
 
 lb_egress_roles = [
   {
@@ -25,6 +25,6 @@ common_tags = {
   Environment = "stage"
   Project     = "IDMS"
 }
-ssm_param_name         = "/stage-cloudwatch/docker-config"
-ssm_tag_name           = "stage-docker-cloudwatch-config"
+ssm_param_name = "/stage-cloudwatch/docker-config"
+ssm_tag_name   = "stage-docker-cloudwatch-config"
 

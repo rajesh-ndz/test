@@ -1,4 +1,4 @@
- ###General###
+###General###
 variable "environment" {}
 variable "region" {
   description = "AWS region"
@@ -6,12 +6,12 @@ variable "region" {
 }
 
 variable "tf_state_bucket" {
-  type = string
+  type        = string
   description = "name of the tf state bucket"
 }
 
 variable "common_tags" {
-  type = map
+  type = map(any)
 }
 
 variable "ami_id" {
@@ -21,7 +21,7 @@ variable "ami_id" {
 
 ###VPC###
 variable "instance_tenancy" {
-  type = string
+  type    = string
   default = "default"
 }
 variable "enable_dns_support" {
@@ -55,52 +55,52 @@ variable "nat_gateway_name" {
 
 variable "private_lb_subnets" {
   type = object({
-    routes                   = list(any)
-    cidrs_blocks             = list(string)
-    subnets_name_prefix      = string
-    route_table_name         = string
+    routes              = list(any)
+    cidrs_blocks        = list(string)
+    subnets_name_prefix = string
+    route_table_name    = string
   })
 }
 
 ###Private Subnets###
 variable "private_subnets" {
   type = object({
-    routes                   = list(any)
-    cidrs_blocks             = list(string)
-    subnets_name_prefix      = string
-    route_table_name         = string
+    routes              = list(any)
+    cidrs_blocks        = list(string)
+    subnets_name_prefix = string
+    route_table_name    = string
   })
 }
 
 ##Private Data Subnets
 variable "private_data_subnets" {
   type = object({
-    routes                   = list(any)
-    cidrs_blocks             = list(string)
-    subnets_name_prefix      = string
-    route_table_name         = string
-    is_public                = bool
+    routes              = list(any)
+    cidrs_blocks        = list(string)
+    subnets_name_prefix = string
+    route_table_name    = string
+    is_public           = bool
   })
 }
 
 ##Private Services Subnets
 variable "private_services_subnets" {
   type = object({
-    routes                   = list(any)
-    cidrs_blocks             = list(string)
-    subnets_name_prefix      = string
-    route_table_name         = string
+    routes              = list(any)
+    cidrs_blocks        = list(string)
+    subnets_name_prefix = string
+    route_table_name    = string
   })
 }
 
 ###Public Subnets###
 variable "public_subnets" {
   type = object({
-    routes                   = list(any)
-    cidrs_blocks             = list(string)
-    subnets_name_prefix      = string
-    map_public_ip_on_launch  = bool
-    route_table_name         = string
+    routes                  = list(any)
+    cidrs_blocks            = list(string)
+    subnets_name_prefix     = string
+    map_public_ip_on_launch = bool
+    route_table_name        = string
   })
 }
 

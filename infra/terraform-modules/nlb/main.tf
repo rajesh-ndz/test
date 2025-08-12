@@ -55,7 +55,7 @@ resource "aws_lb_target_group_attachment" "multi" {
     for combo in flatten([
       for port in var.additional_ports : [
         for ip in var.target_ips : {
-          key = "${port}-${ip}"
+          key  = "${port}-${ip}"
           port = port
           ip   = ip
         }
