@@ -45,7 +45,7 @@ output "vpc_link_subnet_ids" {
   description = "Private subnet IDs in supported AZs for API Gateway VPC Link"
   value = [
     for s in aws_subnet.private_subnets :
-    s.id if contains(["eu-west-1a", "eu-west-1b", "eu-west-1c"], s.availability_zone)
+    s.id if contains(["ap-southeast-1a", "ap-southeast-1b", "ap-southeast-1c"], s.availability_zone)
   ]
 }
 
