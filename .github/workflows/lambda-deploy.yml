@@ -22,10 +22,10 @@ jobs:
       FUNCTION_NAME: ${{ github.event.inputs.ENV }}-idlms-lambda
 
     steps:
-      - name: Checkout `feature/btl-52` codebase
+      - name: Checkout `feature/btl-77` codebase
         uses: actions/checkout@v3
         with:
-          ref: feature/btl-52
+          ref: feature/btl-77
           fetch-depth: 0
 
       - name: Short-circuit if rollback version is provided
