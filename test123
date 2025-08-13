@@ -1,1 +1,27 @@
 testing
+
+NODE_ENV=production
+APP_NAME=idlms-license-api
+
+# three app ports (compose + NLB expect these)
+PORT=4000
+PORT1=4001
+PORT2=4002
+
+AWS_REGION=ap-southeast-1
+AWS_DEFAULT_REGION=ap-southeast-1
+S3_ARTIFACT_BUCKET=test-s3-idlmreplatforming-artifact
+CLOUDWATCH_LOG_GROUP=/dev/docker/api
+TZ=Asia/Singapore
+
+# REPLACE all placeholders below
+DB_HOST=<rds-endpoint.rds.amazonaws.com>
+DB_PORT=5432
+DB_NAME=<dbname>
+DB_USER=<dbuser>
+DB_PASSWORD=<dbpass>
+
+JWT_SECRET=<openssl rand -base64 32>
+JWT_EXPIRES_IN=1d
+
+LOG_LEVEL=info
