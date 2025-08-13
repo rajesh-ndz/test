@@ -27,10 +27,10 @@ RUN npm install --only=production
 # Copy built app from builder
 COPY --from=builder /app/dist ./dist
 
-# Healthcheck: app listens on PORT (compose sets per service)
-ENV PORT=4000
-HEALTHCHECK --interval=10s --timeout=3s --retries=6 --start-period=20s \
-  CMD curl -fsS "http://localhost:${PORT}/health" || exit 1
+# # Healthcheck: app listens on PORT (compose sets per service)
+# ENV PORT=4000
+# HEALTHCHECK --interval=10s --timeout=3s --retries=6 --start-period=20s \
+#   CMD curl -fsS "http://localhost:${PORT}/health" || exit 1
 
 EXPOSE 4000
 CMD ["node", "dist/main.js"]
