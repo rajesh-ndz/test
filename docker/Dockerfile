@@ -27,12 +27,5 @@ RUN npm install --only=production
 # Copy built app from builder
 COPY --from=builder /app/dist ./dist
 
-# # Add curl so HEALTHCHECK & compose checks can hit the app
-# RUN apk add --no-cache curl
-
-# # Container health (expects your app to serve /health on $PORT)
-# HEALTHCHECK --interval=10s --timeout=3s --retries=12 --start-period=20s \
-#     CMD curl -fsS "http://localhost:${PORT:-4000}/health" || exit 1
-
 EXPOSE 4000
 CMD ["node", "dist/main.js"]
