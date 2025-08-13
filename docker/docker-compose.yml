@@ -13,12 +13,11 @@ services:
       - PORT=${PORT}
     command: node dist/main.js
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:${PORT}/health || exit 1"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:${PORT}/health"]
       interval: 10s
       timeout: 3s
-      retries: 6
+      retries: 12
       start_period: 20s
-
   api2:
     image: ${IMAGE_REPO}:${BUILD_TAG}
     container_name: api2
@@ -31,12 +30,12 @@ services:
       - PORT=${PORT1}
     command: node dist/main.js
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:${PORT1}/health || exit 1"]
+      # FIX: use ${PORT1} here
+      test: ["CMD", "curl", "-fsS", "http://localhost:${PORT1}/health"]
       interval: 10s
       timeout: 3s
-      retries: 6
+      retries: 12
       start_period: 20s
-
   api3:
     image: ${IMAGE_REPO}:${BUILD_TAG}
     container_name: api3
@@ -49,10 +48,10 @@ services:
       - PORT=${PORT2}
     command: node dist/main.js
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:${PORT2}/health || exit 1"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:${PORT2}/health"]
       interval: 10s
       timeout: 3s
-      retries: 6
+      retries: 12
       start_period: 20s
 
 

@@ -155,7 +155,7 @@ jobs:
           if [ -z "$TAG" ]; then TAG="${{ env.BUILD_TAG }}"; fi
           echo "TAG_TO_DEPLOY=$TAG" >> $GITHUB_ENV
 
-      - name: Deploy containers via SSM (health + simple error)
+      - name: Deploy containers with rollback logic via SSM (health & simple error)
         run: |
           TAG_TO_DEPLOY="${{ env.TAG_TO_DEPLOY }}"
           ENV="${{ github.event.inputs.ENV }}"
@@ -163,54 +163,76 @@ jobs:
           AWS_REGION="${{ env.AWS_REGION }}"
           BACKUP_BUCKET="${{ env.BACKUP_BUCKET }}"
           SSM_ENV_PARAM="${{ env.SSM_ENV_PARAM }}"
-
+          REG_HOST="${ECR_REPO_URL%/*}"
+  
           if [ -z "$SSM_ENV_PARAM" ]; then
             echo "::error::SSM_ENV_PARAM is empty; ensure the Terraform SSM step exported it"
             exit 1
           fi
-
+  
           # Pick newest running instance
           INSTANCE_ID=$(aws ec2 describe-instances \
             --filters "Name=tag:Name,Values=Backend API IDLMS-${ENV}" "Name=instance-state-name,Values=running" \
             --query "sort_by(Reservations[].Instances[], &LaunchTime)[-1].InstanceId" \
             --region "$AWS_REGION" \
             --output text)
+  
           if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
             echo "::error::pods not up"
             exit 1
           fi
-
-          # Build params.json to avoid CLI quoting issues
-          cat > params.json <<JSON
+  
+          # Build params.json (no shell escaping issues)
+          cat > params.json <<'JSON'
           {
             "commands": [
               "set -euo pipefail",
               "cd /home/ubuntu",
               "apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io curl",
               "systemctl enable --now docker || service docker start || true",
-              "ENV_CONTENT=$(aws ssm get-parameter --name '${SSM_ENV_PARAM}' --with-decryption --query 'Parameter.Value' --output text --region '${AWS_REGION}')",
-              "printf '%s\\nBUILD_TAG=${TAG_TO_DEPLOY}\\nIMAGE_REPO=${ECR_REPO_URL}\\n' \\\"$ENV_CONTENT\\\" > .env",
-              "aws s3 cp s3://${BACKUP_BUCKET}/${ENV}/docker-compose.yml docker-compose.yml --region '${AWS_REGION}'",
-              "if ! command -v docker-compose &>/dev/null; then curl -L 'https://github.com/docker/compose/releases/download/1.29.2/docker-compose-\\$(uname -s)-\\$(uname -m)' -o /usr/local/bin/docker-compose && chmod +x /usr/local/bin/docker-compose && ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose; fi",
-              "aws ecr get-login-password --region '${AWS_REGION}' | docker login --username AWS --password-stdin ${ECR_REPO_URL%/*}",
+  
+              "ENV_CONTENT=$(aws ssm get-parameter --name __SSM_PARAM__ --with-decryption --query 'Parameter.Value' --output text --region __REGION__)",
+              "printf '%s\nBUILD_TAG=__TAG__\nIMAGE_REPO=__ECR_URL__\n' \"$ENV_CONTENT\" > .env",
+  
+              "aws s3 cp s3://__BACKUP__/__ENV__/docker-compose.yml docker-compose.yml --region __REGION__",
+  
+              "if ! command -v docker-compose >/dev/null 2>&1; then curl -L https://github.com/docker/compose/releases/download/1.29.2/docker-compose-Linux-x86_64 -o /usr/local/bin/docker-compose && chmod +x /usr/local/bin/docker-compose && ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose; fi",
+  
+              "aws ecr get-login-password --region __REGION__ | docker login --username AWS --password-stdin __REG_HOST__",
+  
               "docker-compose --env-file .env down || true",
               "docker-compose --env-file .env pull --ignore-pull-failures",
               "docker-compose --env-file .env up -d --force-recreate --build",
+  
               "sleep 10",
-              "TRIES=0; MAX=12; OK=0; while [ \\$TRIES -lt \\$MAX ]; do H1=\\$(docker inspect -f '{{.State.Health.Status}}' api1 2>/dev/null || echo starting); H2=\\$(docker inspect -f '{{.State.Health.Status}}' api2 2>/dev/null || echo starting); H3=\\$(docker inspect -f '{{.State.Health.Status}}' api3 2>/dev/null || echo starting); if [ \\\"\\$H1\\\" = healthy ] && [ \\\"\\$H2\\\" = healthy ] && [ \\\"\\$H3\\\" = healthy ]; then OK=1; break; fi; TRIES=\\$((TRIES+1)); sleep 10; done; if [ \\\"\\$OK\\\" -ne 1 ]; then echo 'pods not up'; exit 1; fi",
-              "aws ssm put-parameter --name '/idlms/license-api/last-successful-build' --value '${TAG_TO_DEPLOY}' --type String --overwrite --region '${AWS_REGION}'"
+  
+              "TRIES=0; MAX=12; OK=0; while [ $TRIES -lt $MAX ]; do H1=$(docker inspect -f '{{.State.Health.Status}}' api1 2>/dev/null || echo starting); H2=$(docker inspect -f '{{.State.Health.Status}}' api2 2>/dev/null || echo starting); H3=$(docker inspect -f '{{.State.Health.Status}}' api3 2>/dev/null || echo starting); if [ \"$H1\" = healthy ] && [ \"$H2\" = healthy ] && [ \"$H3\" = healthy ]; then OK=1; break; fi; TRIES=$((TRIES+1)); sleep 10; done; if [ \"$OK\" -ne 1 ]; then echo 'pods not up'; exit 1; fi",
+  
+              "aws ssm put-parameter --name /idlms/license-api/last-successful-build --value __TAG__ --type String --overwrite --region __REGION__"
             ]
           }
           JSON
-
+  
+          # Substitute placeholders safely
+          sed -i \
+            -e "s|__REGION__|$AWS_REGION|g" \
+            -e "s|__SSM_PARAM__|$SSM_ENV_PARAM|g" \
+            -e "s|__TAG__|$TAG_TO_DEPLOY|g" \
+            -e "s|__ECR_URL__|$ECR_REPO_URL|g" \
+            -e "s|__BACKUP__|$BACKUP_BUCKET|g" \
+            -e "s|__ENV__|$ENV|g" \
+            -e "s|__REG_HOST__|$REG_HOST|g" \
+            params.json
+  
+          # Send the command
           CMD_ID=$(aws ssm send-command \
             --document-name "AWS-RunShellScript" \
             --instance-ids "$INSTANCE_ID" \
             --comment "Deploy containers with health check" \
             --parameters file://params.json \
             --query "Command.CommandId" --output text --region "$AWS_REGION")
-
-          # Wait for SSM to finish; simple error if not Success
+  
+          # Wait and surface a simple error if it fails
           while true; do
             STATUS=$(aws ssm list-command-invocations \
               --command-id "$CMD_ID" \
@@ -224,3 +246,4 @@ jobs:
               *) echo "::error::pods not up"; exit 1 ;;
             esac
           done
+ 
