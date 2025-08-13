@@ -6,7 +6,7 @@ on:
       ENV:
         description: 'Environment to deploy (dev/staging/prod)'
         required: true
-        default: "stage"
+        default: "dev"
       ROLLBACK_TAG:
         description: 'Optional: Previous build tag (e.g., 2025.06.30.02). If left blank, deploys latest.'
         required: false
@@ -33,6 +33,7 @@ jobs:
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
+          terraform_wrapper: false
           
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v3
