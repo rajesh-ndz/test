@@ -98,8 +98,7 @@ jobs:
       #     #ECR_REPO_URL1=$(terraform output -raw ecr_repository_url | xargs)
       #     echo "ECR_REPO_URL=$ECR_REPO_URL" >> $GITHUB_ENV
       #     echo $ECR_REPO_URL
-      #     echo $GITHUB_ENV
-
+  #     echo $GITHUB_ENV
       - name: Terraform Apply ECR
         id: ecr
         run: |
@@ -257,7 +256,15 @@ jobs:
           ECR_REPO_URL="${{ env.ECR_REPO_URL }}"
           AWS_REGION="${{ env.AWS_REGION }}"
           BACKUP_BUCKET="${{ env.BACKUP_BUCKET }}"
+          SSM_ENV_PARAM="${{ env.SSM_ENV_PARAM }}"
 
+          # Guard: make sure Terraform SSM step exported a clean param name (no ssm:// prefix)
+          if [ -z "$SSM_ENV_PARAM" ]; then
+            echo "::error::SSM_ENV_PARAM is empty; ensure the Terraform SSM step exported it"
+            exit 1
+          fi
+
+          # Find target instance
           INSTANCE_ID=$(aws ec2 describe-instances \
             --filters "Name=tag:Name,Values=Backend API IDLMS-${ENV}" "Name=instance-state-name,Values=running" \
             --query "Reservations[].Instances[].InstanceId" \
@@ -269,6 +276,7 @@ jobs:
             exit 1
           fi
 
+          # Run remote deploy via SSM
           CMD_ID=$(aws ssm send-command \
             --document-name "AWS-RunShellScript" \
             --instance-ids "$INSTANCE_ID" \
@@ -276,9 +284,9 @@ jobs:
             --parameters commands="[
               \"set -euo pipefail\",
               \"cd /home/ubuntu\",
-              \"ENV_CONTENT=$(aws ssm get-parameter --name '/idlms/shared/$ENV/.env' --with-decryption --query 'Parameter.Value' --output text)\",
+              \"ENV_CONTENT=$(aws ssm get-parameter --name '$SSM_ENV_PARAM' --with-decryption --query 'Parameter.Value' --output text --region '$AWS_REGION')\",
               \"printf '%s\nBUILD_TAG=$TAG_TO_DEPLOY\nIMAGE_REPO=$ECR_REPO_URL\n' \\\"$ENV_CONTENT\\\" > .env\",
-              \"aws s3 cp s3://$BACKUP_BUCKET/$ENV/docker-compose.yml docker-compose.yml\",
+              \"aws s3 cp s3://$BACKUP_BUCKET/$ENV/docker-compose.yml docker-compose.yml --region '$AWS_REGION'\",
               \"if ! command -v docker &> /dev/null; then sudo apt-get update -y && sudo apt-get install -y docker.io; fi\",
               \"if ! command -v docker-compose &> /dev/null; then curl -L 'https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)' -o /usr/local/bin/docker-compose && chmod +x /usr/local/bin/docker-compose && ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose || true; fi\",
               \"aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin ${ECR_REPO_URL%/*}\",
@@ -289,12 +297,10 @@ jobs:
               \"sleep 60\",
               \"HEALTHY=0; for n in api1 api2 api3; do HS=$(docker inspect -f '{{.State.Health.Status}}' $n 2>/dev/null || echo unknown); [ \\\"$HS\\\" = \\\"healthy\\\" ] && HEALTHY=$((HEALTHY+1)); done; \
               if [ \\\"$HEALTHY\\\" -ne 3 ]; then \
-                PREV_TAG=$(aws ssm get-parameter --name '/idlms/license-api/last-successful-build' --query 'Parameter.Value' --output text 2>/dev/null || echo ''); \
-                if [ -n \\\"$PREV_TAG\\\" ]; then sed -i '/BUILD_TAG=/d' .env && echo \\\"BUILD_TAG=$PREV_TAG\\\" >> .env; docker-compose --env-file .env down || true; docker-compose --env-file .env pull --ignore-pull-failures; docker-compose --env-file .env up -d --force-recreate --build; fi; \
                 echo 'pods not up'; \
                 exit 1; \
               else \
-                aws ssm put-parameter --name '/idlms/license-api/last-successful-build' --value '$TAG_TO_DEPLOY' --type String --overwrite; \
+                aws ssm put-parameter --name '/idlms/license-api/last-successful-build' --value '$TAG_TO_DEPLOY' --type String --overwrite --region '$AWS_REGION'; \
               fi\"
             ]" \
             --query "Command.CommandId" --output text --region "$AWS_REGION")
@@ -313,4 +319,4 @@ jobs:
               *) echo "::error::pods not up"; exit 1 ;;
             esac
           done
-
+      
