@@ -1,60 +1,3 @@
-version: "3.8"
-
-services:
-  api1:
-    image: ${IMAGE_REPO}:${BUILD_TAG}
-    container_name: api1
-    restart: always
-    env_file:
-      - .env
-    ports:
-      - "${PORT}:${PORT}"
-    environment:
-      - PORT=${PORT}
-    command: node dist/main.js
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:${PORT}/health"]
-      interval: 10s
-      timeout: 3s
-      retries: 12
-      start_period: 20s
-  api2:
-    image: ${IMAGE_REPO}:${BUILD_TAG}
-    container_name: api2
-    restart: always
-    env_file:
-      - .env
-    ports:
-      - "${PORT1}:${PORT1}"
-    environment:
-      - PORT=${PORT1}
-    command: node dist/main.js
-    healthcheck:
-      # FIX: use ${PORT1} here
-      test: ["CMD", "curl", "-fsS", "http://localhost:${PORT1}/health"]
-      interval: 10s
-      timeout: 3s
-      retries: 12
-      start_period: 20s
-  api3:
-    image: ${IMAGE_REPO}:${BUILD_TAG}
-    container_name: api3
-    restart: always
-    env_file:
-      - .env
-    ports:
-      - "${PORT2}:${PORT2}"
-    environment:
-      - PORT=${PORT2}
-    command: node dist/main.js
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:${PORT2}/health"]
-      interval: 10s
-      timeout: 3s
-      retries: 12
-      start_period: 20s
-
-
 # version: "3.8"
 
 # services:
@@ -69,7 +12,12 @@ services:
 #     environment:
 #       - PORT=${PORT}
 #     command: node dist/main.js
-
+#     healthcheck:
+#       test: ["CMD", "curl", "-fsS", "http://localhost:${PORT}/health"]
+#       interval: 10s
+#       timeout: 3s
+#       retries: 12
+#       start_period: 20s
 #   api2:
 #     image: ${IMAGE_REPO}:${BUILD_TAG}
 #     container_name: api2
@@ -81,7 +29,13 @@ services:
 #     environment:
 #       - PORT=${PORT1}
 #     command: node dist/main.js
-
+#     healthcheck:
+#       # FIX: use ${PORT1} here
+#       test: ["CMD", "curl", "-fsS", "http://localhost:${PORT1}/health"]
+#       interval: 10s
+#       timeout: 3s
+#       retries: 12
+#       start_period: 20s
 #   api3:
 #     image: ${IMAGE_REPO}:${BUILD_TAG}
 #     container_name: api3
@@ -93,4 +47,50 @@ services:
 #     environment:
 #       - PORT=${PORT2}
 #     command: node dist/main.js
+#     healthcheck:
+#       test: ["CMD", "curl", "-fsS", "http://localhost:${PORT2}/health"]
+#       interval: 10s
+#       timeout: 3s
+#       retries: 12
+#       start_period: 20s
+
+
+version: "3.8"
+
+services:
+  api1:
+    image: ${IMAGE_REPO}:${BUILD_TAG}
+    container_name: api1
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "${PORT}:${PORT}"
+    environment:
+      - PORT=${PORT}
+    command: node dist/main.js
+
+  api2:
+    image: ${IMAGE_REPO}:${BUILD_TAG}
+    container_name: api2
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "${PORT1}:${PORT1}"
+    environment:
+      - PORT=${PORT1}
+    command: node dist/main.js
+
+  api3:
+    image: ${IMAGE_REPO}:${BUILD_TAG}
+    container_name: api3
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "${PORT2}:${PORT2}"
+    environment:
+      - PORT=${PORT2}
+    command: node dist/main.js
 
