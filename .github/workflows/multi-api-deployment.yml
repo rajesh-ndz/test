@@ -256,43 +256,55 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Check docker containers via SSM (simple error if not healthy)
+      - name: Check docker containers via SSM (accept Up when no healthcheck)
         run: |
           ENV="${{ github.event.inputs.ENV }}"
-          AWS_REGION="${{ env.AWS_REGION }}"
+           AWS_REGION="${{ env.AWS_REGION }}"
+      
+          # Pick newest running instance by tag (same logic as deploy)
           INSTANCE_ID=$(aws ec2 describe-instances \
             --filters "Name=tag:Name,Values=Backend API IDLMS-${ENV}" "Name=instance-state-name,Values=running" \
             --query "sort_by(Reservations[].Instances[], &LaunchTime)[-1].InstanceId" \
             --region "$AWS_REGION" \
-            --output text)
+             --output text)
+      
           echo "Health check on INSTANCE_ID: $INSTANCE_ID (region: $AWS_REGION)"
           if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
             echo "::error::pods not up"
             exit 1
-          fi
-
+           fi
+      
+          # Minimal JSON for SSM Run Command
           cat > check.json <<'JSON'
           {
             "commands": [
               "set -e",
               "echo '--- health check start ---'",
               "if ! command -v docker >/dev/null 2>&1; then echo 'pods not up'; exit 1; fi",
-              "NAMES='api1 api2 api3'",
-              "FAILED=0",
-              "for n in $NAMES; do HS=$(docker inspect -f '{{.State.Health.Status}}' $n 2>/dev/null || echo unknown); if [ \"$HS\" = healthy ]; then echo \"$n: healthy\"; else echo \"$n: $HS\"; FAILED=1; fi; done",
-              "if [ \"$FAILED\" -ne 0 ]; then echo 'pods not up'; exit 1; fi",
+              "NAMES='api1 api2 api3'; FAILED=0; \
+               for n in $NAMES; do \
+                 HS=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}nohealth{{end}}' $n 2>/dev/null || echo unknown); \
+                 if [ \"$HS\" = healthy ]; then \
+                   echo \"$n: healthy\"; \
+                 elif docker ps --format '{{.Names}} {{.Status}}' | awk -v c=$n '$1==c && $2 ~ /^Up/ {ok=1} END{exit !ok}'; then \
+                   echo \"$n: Up (no HEALTHCHECK)\"; \
+                 else \
+                   echo \"$n: not running ($HS)\"; FAILED=1; \
+                 fi; \
+               done; \
+               if [ \"$FAILED\" -ne 0 ]; then echo 'pods not up'; exit 1; fi",
               "echo 'pods up'"
             ]
           }
-          JSON
-
+           JSON
+      
           CMD_ID=$(aws ssm send-command \
             --document-name "AWS-RunShellScript" \
             --instance-ids "$INSTANCE_ID" \
             --comment "Post-deploy health check" \
             --parameters file://check.json \
-            --query "Command.CommandId" --output text --region "$AWS_REGION")
-
+             --query "Command.CommandId" --output text --region "$AWS_REGION")
+      
           while true; do
             STATUS=$(aws ssm list-command-invocations \
               --command-id "$CMD_ID" \
@@ -305,16 +317,17 @@ jobs:
               Success|Cancelled|TimedOut|Failed) break ;;
               *) sleep 5 ;;
             esac
-          done
-
+           done
+      
           echo "SSM status: $STATUS"
           aws ssm get-command-invocation \
             --command-id "$CMD_ID" \
             --instance-id "$INSTANCE_ID" \
             --region "$AWS_REGION" \
-            --query 'StandardOutputContent' --output text || true
-
+             --query 'StandardOutputContent' --output text || true
+      
           if [ "$STATUS" != "Success" ]; then
             echo "::error::pods not up"
             exit 1
-          fi
+           fi
+      

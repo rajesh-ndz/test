@@ -69,6 +69,13 @@ services:
     environment:
       - PORT=${PORT}
     command: node dist/main.js
+    healthcheck:
+      # tries curl, falls back to wget (works on Alpine/busybox) then fails
+      test: ["CMD-SHELL", "curl -fsS http://localhost:${PORT}/health || wget -qO- http://localhost:${PORT}/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   api2:
     image: ${IMAGE_REPO}:${BUILD_TAG}
@@ -81,6 +88,13 @@ services:
     environment:
       - PORT=${PORT1}
     command: node dist/main.js
+    healthcheck:
+      # tries curl, falls back to wget (works on Alpine/busybox) then fails
+      test: ["CMD-SHELL", "curl -fsS http://localhost:${PORT}/health || wget -qO- http://localhost:${PORT}/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   api3:
     image: ${IMAGE_REPO}:${BUILD_TAG}
@@ -93,4 +107,11 @@ services:
     environment:
       - PORT=${PORT2}
     command: node dist/main.js
+    healthcheck:
+      # tries curl, falls back to wget (works on Alpine/busybox) then fails
+      test: ["CMD-SHELL", "curl -fsS http://localhost:${PORT}/health || wget -qO- http://localhost:${PORT}/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
