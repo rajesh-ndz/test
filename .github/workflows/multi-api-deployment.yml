@@ -98,7 +98,7 @@ jobs:
           #ECR_REPO_URL1=$(terraform output -raw ecr_repository_url | xargs)
           echo "ECR_REPO_URL=$ECR_REPO_URL" >> $GITHUB_ENV
           echo $ECR_REPO_URL
-      echo $GITHUB_ENV
+          
       # - name: Terraform Apply ECR
       #   id: ecr
       #   run: |
