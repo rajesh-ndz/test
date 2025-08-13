@@ -263,19 +263,20 @@ jobs:
             exit 1
           fi
 
-          # Find target instance
+          # Pick the newest running instance with the Name tag
           INSTANCE_ID=$(aws ec2 describe-instances \
             --filters "Name=tag:Name,Values=Backend API IDLMS-${ENV}" "Name=instance-state-name,Values=running" \
-            --query "Reservations[].Instances[].InstanceId" \
+            --query "sort_by(Reservations[].Instances[], &LaunchTime)[-1].InstanceId" \
             --region "$AWS_REGION" \
             --output text)
+          echo "Target instance: $INSTANCE_ID"
 
-          if [ -z "$INSTANCE_ID" ]; then
+          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
             echo "::error::pods not up"
             exit 1
           fi
 
-          # Run remote deploy via SSM
+          # Remote deploy via SSM
           CMD_ID=$(aws ssm send-command \
             --document-name "AWS-RunShellScript" \
             --instance-ids "$INSTANCE_ID" \
@@ -283,24 +284,50 @@ jobs:
             --parameters commands="[
               \"set -euo pipefail\",
               \"cd /home/ubuntu\",
+
+              # --- Install Docker & Compose, then start Docker service ---
+              \"apt-get update -y\",
+              \"DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io curl\",
+              \"systemctl enable --now docker || service docker start || true\",
+
+              # --- Get app env from SSM and write .env (append tag + repo) ---
               \"ENV_CONTENT=$(aws ssm get-parameter --name ${SSM_ENV_PARAM} --with-decryption --query 'Parameter.Value' --output text --region ${AWS_REGION})\",
-              \"printf '%s\nBUILD_TAG=$TAG_TO_DEPLOY\nIMAGE_REPO=$ECR_REPO_URL\n' \\\"$ENV_CONTENT\\\" > .env\",
+              \"printf '%s\\nBUILD_TAG=$TAG_TO_DEPLOY\\nIMAGE_REPO=$ECR_REPO_URL\\n' \\\"$ENV_CONTENT\\\" > .env\",
+              \"echo '--- .env written ---'\",
+              \"grep -E 'BUILD_TAG|IMAGE_REPO' .env || true\",
+
+              # --- Fetch docker-compose.yml from S3 ---
               \"aws s3 cp s3://$BACKUP_BUCKET/$ENV/docker-compose.yml docker-compose.yml --region ${AWS_REGION}\",
-              \"if ! command -v docker &> /dev/null; then sudo apt-get update -y && sudo apt-get install -y docker.io; fi\",
-              \"if ! command -v docker-compose &> /dev/null; then curl -L 'https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)' -o /usr/local/bin/docker-compose && chmod +x /usr/local/bin/docker-compose && ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose || true; fi\",
+              \"echo '--- docker-compose.yml downloaded ---'\",
+              \"ls -la docker-compose.yml\",
+
+              # --- Install docker-compose v1 (if plugin missing) ---
+              \"if ! command -v docker-compose &>/dev/null; then curl -L 'https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)' -o /usr/local/bin/docker-compose && chmod +x /usr/local/bin/docker-compose && ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose; fi\",
+              \"docker --version && docker-compose --version\",
+
+              # --- ECR login, deploy, wait a bit ---
               \"aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REPO_URL%/*}\",
               \"docker-compose --env-file .env down || true\",
               \"docker rmi ${IMAGE_REPO}:${BUILD_TAG} || true\",
               \"docker-compose --env-file .env pull --ignore-pull-failures\",
               \"docker-compose --env-file .env up -d --force-recreate --build\",
               \"sleep 60\",
-              \"HEALTHY=0; for n in api1 api2 api3; do HS=$(docker inspect -f '{{.State.Health.Status}}' $n 2>/dev/null || echo unknown); [ \\\"$HS\\\" = \\\"healthy\\\" ] && HEALTHY=$((HEALTHY+1)); done; \
+
+              # --- Health verification ---
+              # Prefer Docker HEALTHCHECK if present; else count containers 'Up'
+              \"HEALTHY=0; NAMES='api1 api2 api3'; \
+              for n in $NAMES; do \
+                HS=$(docker inspect -f '{{.State.Health.Status}}' $n 2>/dev/null || echo unknown); \
+                if [ \\\"$HS\\\" = \\\"healthy\\\" ]; then HEALTHY=$((HEALTHY+1)); fi; \
+              done; \
               if [ \\\"$HEALTHY\\\" -ne 3 ]; then \
-                echo 'pods not up'; \
-                exit 1; \
-              else \
-                aws ssm put-parameter --name '/idlms/license-api/last-successful-build' --value '$TAG_TO_DEPLOY' --type String --overwrite --region ${AWS_REGION}; \
-              fi\"
+                RUNNING=$(docker ps --format '{{.Names}} {{.Status}}' | awk '/api1|api2|api3/ && /Up/ {c++} END {print c+0}'); \
+                if [ \\\"$RUNNING\\\" -ne 3 ]; then echo 'pods not up'; exit 1; fi; \
+              fi; \
+              echo 'all pods up';\",
+
+              # --- Record last-successful-build if OK ---
+              \"aws ssm put-parameter --name '/idlms/license-api/last-successful-build' --value '$TAG_TO_DEPLOY' --type String --overwrite --region ${AWS_REGION}\"
             ]" \
             --query "Command.CommandId" --output text --region "$AWS_REGION")
 
