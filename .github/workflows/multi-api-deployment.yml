@@ -253,11 +253,7 @@ jobs:
           AWS_REGION="${{ env.AWS_REGION }}"
         
           # Pick newest running instance by tag (same logic as deploy)
-          INSTANCE_ID=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=Backend API IDLMS-${ENV}" "Name=instance-state-name,Values=running" \
-            --query "sort_by(Reservations[].Instances[], &LaunchTime)[-1].InstanceId" \
-            --region "$AWS_REGION" \
-            --output text)
+          INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=Backend API IDLMS-${ENV}" "Name=instance-state-name,Values=running" --query "sort_by(Reservations[].Instances[], &LaunchTime)[-1].InstanceId" --region "$AWS_REGION" --output text)
         
           echo "Health check on INSTANCE_ID: $INSTANCE_ID (region: $AWS_REGION)"
           if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
@@ -287,20 +283,10 @@ jobs:
           JSON
             
           # Send and wait
-          CMD_ID=$(aws ssm send-command \
-            --document-name "AWS-RunShellScript" \
-            --instance-ids "$INSTANCE_ID" \
-            --comment "Post-deploy health check" \
-            --parameters file://check.json \
-            --query "Command.CommandId" --output text --region "$AWS_REGION")
+          CMD_ID=$(aws ssm send-command --document-name "AWS-RunShellScript" --instance-ids "$INSTANCE_ID" --comment "Post-deploy health check" --parameters file://check.json --query "Command.CommandId" --output text --region "$AWS_REGION")
             
           while true; do
-            STATUS=$(aws ssm list-command-invocations \
-              --command-id "$CMD_ID" \
-              --details \
-              --query 'CommandInvocations[0].Status' \
-              --output text \
-              --region "$AWS_REGION")
+            STATUS=$(aws ssm list-command-invocations --command-id "$CMD_ID" --details --query 'CommandInvocations[0].Status' --output text --region "$AWS_REGION")
             case "$STATUS" in
               Pending|InProgress|Delayed) sleep 5 ;;
               Success|Cancelled|TimedOut|Failed) break ;;
@@ -309,11 +295,7 @@ jobs:
           done
             
           echo "SSM status: $STATUS"
-          aws ssm get-command-invocation \
-            --command-id "$CMD_ID" \
-            --instance-id "$INSTANCE_ID" \
-            --region "$AWS_REGION" \
-            --query 'StandardOutputContent' --output text || true
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" --region "$AWS_REGION" --query 'StandardOutputContent' --output text || true
             
           if [ "$STATUS" != "Success" ]; then
             echo "::error::pods not up"
