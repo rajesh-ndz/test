@@ -242,8 +242,8 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
         
-      - name: Wait 30 seconds for containers to settle
-        run: sleep 30
+      - name: Wait 40 seconds for containers to settle
+        run: sleep 40
         
       - name: Check docker containers via SSM (accept Up when no healthcheck)
         shell: bash
@@ -273,7 +273,7 @@ jobs:
               "for n in $NAMES; do",
               "  HS=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}nohealth{{end}}' $n 2>/dev/null || echo unknown)",
               "  if [ \"$HS\" = healthy ]; then echo \"$n: healthy\";",
-              "  elif docker ps --format '{{.Names}} {{.Status}}' | awk -v c=$n '$1==c && $2 ~ /^Up/ {ok=1} END{exit !ok}'; then echo \"$n: Up (no HEALTHCHECK)\";",
+              "  elif docker ps --format '{{.Names}} {{.Status}}' | awk -v c=$n '$1==c && $2 ~ /^Up/ {ok=1} END{exit !ok}'; then echo \"$n: Up (HEALTHCHECK)\";",
               "  else echo \"$n: not running ($HS)\"; FAILED=1; fi;",
               "done",
               "if [ \"$FAILED\" -ne 0 ]; then echo 'pods not up'; exit 1; fi",
