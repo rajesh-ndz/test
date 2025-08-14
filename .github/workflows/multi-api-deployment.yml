@@ -242,8 +242,8 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
         
-      - name: Wait 40 seconds for containers to settle
-        run: sleep 40
+      - name: Wait 45 seconds for containers to settle
+        run: sleep 45
         
       - name: Check docker containers via SSM (accept Up when no healthcheck)
         shell: bash
