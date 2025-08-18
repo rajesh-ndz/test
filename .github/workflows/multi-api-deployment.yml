@@ -214,43 +214,24 @@ jobs:
             exit 1
           fi
 
-          # Build SSM payload with only runner-known literals (no ${IMAGE_REPO}/${BUILD_TAG} in payload)
-          cat > deploy.json <<JSON
+          # Write SSM payload without any local expansion
+          cat > deploy.json <<'JSON'
           {
             "commands": [
               "set -e",
               "cd /home/ubuntu",
-
               "aws ssm get-parameter --name \"/idlms/shared/${ENV}/.env\" --with-decryption --region ${AWS_REGION} --query \"Parameter.Value\" --output text > .env",
               "echo \"BUILD_TAG=${TAG_TO_DEPLOY}\" >> .env",
               "echo \"IMAGE_REPO=${ECR_REPO_URL}\" >> .env",
-
               "aws s3 cp s3://${BACKUP_BUCKET}/${ENV}/docker-compose.yml docker-compose.yml",
-
               "if ! command -v docker &> /dev/null; then sudo apt-get update -y && sudo apt-get install -y docker.io; fi",
-              "if ! command -v docker-compose &> /dev/null; then curl -L \"https://github.com/docker/compose/releases/download/1.29.2/docker-compose-\\$(uname -s)-\\$(uname -m)\" -o /usr/local/bin/docker-compose && chmod +x /usr/local/bin/docker-compose && ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose || true; fi",
-
+              "if ! command -v docker-compose &> /dev/null; then curl -L \"https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)\" -o /usr/local/bin/docker-compose && chmod +x /usr/local/bin/docker-compose && ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose || true; fi",
               "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${REGISTRY}",
-
               "docker-compose --env-file .env down || true",
               "docker-compose --env-file .env pull --ignore-pull-failures",
               "docker-compose --env-file .env up -d --force-recreate",
               "sleep 60",
-
-              "RUNNING_CONTAINERS=\\$(docker ps --format '{{.Names}}' | grep -E \"api1|api2|api3\" | wc -l) && \
-                if [ \"\\$RUNNING_CONTAINERS\" -ne 3 ]; then \
-                  echo \"Deployment failed. Rolling back...\"; \
-                  PREV_TAG=\\$(aws ssm get-parameter --name \"/idlms/license-api/last-successful-build\" --region ${AWS_REGION} --query \"Parameter.Value\" --output text); \
-                  echo \"Rolling back to tag: \\$PREV_TAG\"; \
-                  sed -i \"/BUILD_TAG=/d\" .env; \
-                  echo \"BUILD_TAG=\\$PREV_TAG\" >> .env; \
-                  docker-compose --env-file .env down || true; \
-                  docker-compose --env-file .env pull --ignore-pull-failures; \
-                  docker-compose --env-file .env up -d --force-recreate; \
-                else \
-                  echo \"All containers are up. Saving ${TAG_TO_DEPLOY} as last-successful-build...\"; \
-                  aws ssm put-parameter --name \"/idlms/license-api/last-successful-build\" --region ${AWS_REGION} --value \"${TAG_TO_DEPLOY}\" --type String --overwrite; \
-                fi"
+              "RUNNING_CONTAINERS=$(docker ps --format '{{.Names}}' | grep -E \"api1|api2|api3\" | wc -l); if [ \"$RUNNING_CONTAINERS\" -ne 3 ]; then echo \"Deployment failed. Rolling back...\"; PREV_TAG=$(aws ssm get-parameter --name \"/idlms/license-api/last-successful-build\" --region ${AWS_REGION} --query \"Parameter.Value\" --output text); echo \"Rolling back to tag: $PREV_TAG\"; sed -i \"/BUILD_TAG=/d\" .env; echo \"BUILD_TAG=$PREV_TAG\" >> .env; docker-compose --env-file .env down || true; docker-compose --env-file .env pull --ignore-pull-failures; docker-compose --env-file .env up -d --force-recreate; else echo \"All containers are up. Saving ${TAG_TO_DEPLOY} as last-successful-build...\"; aws ssm put-parameter --name \"/idlms/license-api/last-successful-build\" --region ${AWS_REGION} --value \"${TAG_TO_DEPLOY}\" --type String --overwrite; fi"
             ]
           }
           JSON
@@ -289,6 +270,7 @@ jobs:
             echo "::error::Deploy command failed on instance $INSTANCE_ID"
             exit 1
           fi
+
 
   # ───────────────────────────────────────── Verify ─────────────────────────────────────────
   verify:
