@@ -8,7 +8,7 @@ on:
         required: true
         default: "dev"
       ROLLBACK_TAG:
-        description: 'Optional: Previous build tag (e.g., 2025.06.30.02). If left blank, deploys latest.'
+        description: 'If set (e.g., latest or 2025.06.30.02), deploy that existing tag without building'
         required: false
 
 env:
@@ -130,7 +130,9 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      # Build only when ROLLBACK_TAG is empty (create a new image)
       - name: Generate build tags
+        if: ${{ github.event.inputs.ROLLBACK_TAG == '' }}
         id: tags
         run: |
           ECR_REPO_URL="${{ env.ECR_REPO_URL }}"
@@ -139,26 +141,31 @@ jobs:
           BUILD_TAG="${DATE_TAG}.${BUILD_NUM}"
           IMAGE_URI="${ECR_REPO_URL}:${BUILD_TAG}"
           LATEST_URI="${ECR_REPO_URL}:latest"
-          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
+          echo "IMAGE_URI=$IMAGE_URI"   >> $GITHUB_ENV
           echo "LATEST_URI=$LATEST_URI" >> $GITHUB_ENV
-          echo "BUILD_TAG=$BUILD_TAG" >> $GITHUB_ENV
+          echo "BUILD_TAG=$BUILD_TAG"   >> $GITHUB_ENV
 
       - name: Build and tag Docker image
+        if: ${{ github.event.inputs.ROLLBACK_TAG == '' }}
         run: docker build -t $IMAGE_URI -t $LATEST_URI -f docker/Dockerfile src
 
       - name: Push Docker images to ECR
+        if: ${{ github.event.inputs.ROLLBACK_TAG == '' }}
         run: |
           docker push $IMAGE_URI
           docker push $LATEST_URI
 
       - name: Determine tag to deploy
         id: determine-tag
+        shell: bash
         run: |
-          TAG="${{ github.event.inputs.ROLLBACK_TAG }}"
-          if [ -z "$TAG" ]; then
+          if [ -n "${{ github.event.inputs.ROLLBACK_TAG }}" ]; then
+            TAG="${{ github.event.inputs.ROLLBACK_TAG }}"
+          else
             TAG="${{ env.BUILD_TAG }}"
           fi
           echo "TAG_TO_DEPLOY=$TAG" >> $GITHUB_ENV
+          echo "Deploying TAG_TO_DEPLOY=$TAG"
 
       - name: Deploy containers with rollback logic via SSM
         run: |
@@ -167,6 +174,7 @@ jobs:
           ECR_REPO_URL="${{ env.ECR_REPO_URL }}"
           AWS_REGION="${{ env.AWS_REGION }}"
           BACKUP_BUCKET="${{ env.BACKUP_BUCKET }}"
+
           INSTANCE_ID=$(aws ec2 describe-instances \
             --filters "Name=tag:Name,Values=Backend API IDLMS-${ENV}" "Name=instance-state-name,Values=running" \
             --query "Reservations[].Instances[].InstanceId" \
@@ -176,6 +184,7 @@ jobs:
             echo "ERROR: No running EC2 instance found for environment $ENV"
             exit 1
           fi
+
           echo "Deploying tag: $TAG_TO_DEPLOY"
           aws ssm send-command \
             --document-name "AWS-RunShellScript" \
@@ -195,7 +204,7 @@ jobs:
               "docker-compose --env-file .env down || true",
               "docker rmi ${IMAGE_REPO}:${BUILD_TAG} || true",
               "docker-compose --env-file .env pull --ignore-pull-failures",
-              "docker-compose --env-file .env up -d --force-recreate --build",
+              "docker-compose --env-file .env up -d --force-recreate",
               "sleep 60",
               "RUNNING_CONTAINERS=$(docker ps --format '{{.Names}}' | grep -E \\\"api1|api2|api3\\\" | wc -l) && \
               if [ \\\"$RUNNING_CONTAINERS\\\" -ne 3 ]; then \
@@ -207,7 +216,7 @@ jobs:
                docker-compose --env-file .env down || true; \
                docker rmi ${IMAGE_REPO}:${BUILD_TAG} || true; \
                docker-compose --env-file .env pull --ignore-pull-failures; \
-               docker-compose --env-file .env up -d --force-recreate --build; \
+               docker-compose --env-file .env up -d --force-recreate; \
              else \
                echo \\\"All containers are up. Saving $TAG_TO_DEPLOY as last-successful-build...\\\"; \
                aws ssm put-parameter --name \\\"/idlms/license-api/last-successful-build\\\" --value \\\"$TAG_TO_DEPLOY\\\" --type String --overwrite; \
@@ -252,7 +261,6 @@ jobs:
           ENV="${{ github.event.inputs.ENV }}"
           AWS_REGION="${{ env.AWS_REGION }}"
         
-          # Pick newest running instance by tag (same logic as deploy)
           INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=Backend API IDLMS-${ENV}" "Name=instance-state-name,Values=running" --query "sort_by(Reservations[].Instances[], &LaunchTime)[-1].InstanceId" --region "$AWS_REGION" --output text)
         
           echo "Health check on INSTANCE_ID: $INSTANCE_ID (region: $AWS_REGION)"
@@ -261,7 +269,6 @@ jobs:
             exit 1
           fi
         
-          # Build JSON for SSM (no problematic backslashes)
           cat > check.json <<'JSON'
           {
             "commands": [
@@ -273,7 +280,7 @@ jobs:
               "for n in $NAMES; do",
               "  HS=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}nohealth{{end}}' $n 2>/dev/null || echo unknown)",
               "  if [ \"$HS\" = healthy ]; then echo \"$n: healthy\";",
-              "  elif docker ps --format '{{.Names}} {{.Status}}' | awk -v c=$n '$1==c && $2 ~ /^Up/ {ok=1} END{exit !ok}'; then echo \"$n: Up (HEALTHCHECK)\";",
+              "  elif docker ps --format '{{.Names}} {{.Status}}' | awk -v c=$n '$1==c && $2 ~ /^Up/ {ok=1} END{exit !ok}'; then echo \"$n: Up (no HEALTHCHECK)\";",
               "  else echo \"$n: not running ($HS)\"; FAILED=1; fi;",
               "done",
               "if [ \"$FAILED\" -ne 0 ]; then echo 'pods not up'; exit 1; fi",
@@ -282,7 +289,6 @@ jobs:
           }
           JSON
             
-          # Send and wait
           CMD_ID=$(aws ssm send-command --document-name "AWS-RunShellScript" --instance-ids "$INSTANCE_ID" --comment "Post-deploy health check" --parameters file://check.json --query "Command.CommandId" --output text --region "$AWS_REGION")
             
           while true; do
@@ -301,4 +307,3 @@ jobs:
             echo "::error::pods not up"
             exit 1
           fi
-            
