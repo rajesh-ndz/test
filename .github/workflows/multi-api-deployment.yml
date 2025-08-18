@@ -275,31 +275,40 @@ jobs:
             exit 1
           fi
 
-          # Build a robust SSM payload (expand GH variables here; no fragile quoting)
+          # Build SSM payload safely (runner expands only our literals; no subshells run on runner)
           cat > deploy.json <<JSON
           {
             "commands": [
               "set -e",
               "cd /home/ubuntu",
-              "ENV_CONTENT=$(aws ssm get-parameter --name \"/idlms/shared/${ENV}/.env\" --with-decryption --query \"Parameter.Value\" --output text)",
-              "echo \"$ENV_CONTENT\" > .env",
+
+              # Pull env straight from SSM into a file (no intermediate shell var)
+              "aws ssm get-parameter --name \"/idlms/shared/${ENV}/.env\" --with-decryption --region ${AWS_REGION} --query \"Parameter.Value\" --output text > .env",
               "echo \"BUILD_TAG=${TAG_TO_DEPLOY}\" >> .env",
               "echo \"IMAGE_REPO=${ECR_REPO_URL}\" >> .env",
               "export BUILD_TAG=${TAG_TO_DEPLOY}",
               "export IMAGE_REPO=${ECR_REPO_URL}",
+
               "aws s3 cp s3://${BACKUP_BUCKET}/${ENV}/docker-compose.yml docker-compose.yml",
+
               "if ! command -v docker &> /dev/null; then sudo apt-get update -y && sudo apt-get install -y docker.io; fi",
               "if ! command -v docker-compose &> /dev/null; then curl -L \"https://github.com/docker/compose/releases/download/1.29.2/docker-compose-\\$(uname -s)-\\$(uname -m)\" -o /usr/local/bin/docker-compose && chmod +x /usr/local/bin/docker-compose && ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose || true; fi",
+
               "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REPO_URL%/*}",
+
               "docker-compose --env-file .env down || true",
+
+              # OPTIONAL: you can remove this rmi line to simplify further
               "docker rmi \\${IMAGE_REPO}:\\${BUILD_TAG} || true",
+
               "docker-compose --env-file .env pull --ignore-pull-failures",
               "docker-compose --env-file .env up -d --force-recreate",
               "sleep 60",
+
               "RUNNING_CONTAINERS=\\$(docker ps --format '{{.Names}}' | grep -E \"api1|api2|api3\" | wc -l) && \
                 if [ \"\\$RUNNING_CONTAINERS\" -ne 3 ]; then \
                   echo \"Deployment failed. Rolling back...\"; \
-                  PREV_TAG=\\$(aws ssm get-parameter --name \"/idlms/license-api/last-successful-build\" --query \"Parameter.Value\" --output text); \
+                  PREV_TAG=\\$(aws ssm get-parameter --name \"/idlms/license-api/last-successful-build\" --region ${AWS_REGION} --query \"Parameter.Value\" --output text); \
                   echo \"Rolling back to tag: \\$PREV_TAG\"; \
                   sed -i \"/BUILD_TAG=/d\" .env; \
                   echo \"BUILD_TAG=\\$PREV_TAG\" >> .env; \
@@ -310,13 +319,12 @@ jobs:
                   docker-compose --env-file .env up -d --force-recreate; \
                 else \
                   echo \"All containers are up. Saving ${TAG_TO_DEPLOY} as last-successful-build...\"; \
-                  aws ssm put-parameter --name \"/idlms/license-api/last-successful-build\" --value \"${TAG_TO_DEPLOY}\" --type String --overwrite; \
+                  aws ssm put-parameter --name \"/idlms/license-api/last-successful-build\" --region ${AWS_REGION} --value \"${TAG_TO_DEPLOY}\" --type String --overwrite; \
                 fi"
             ]
           }
           JSON
 
-          # Send and wait for result (so the GitHub step reflects success/failure)
           CMD_ID=$(aws ssm send-command \
             --document-name "AWS-RunShellScript" \
             --instance-ids "$INSTANCE_ID" \
@@ -328,7 +336,7 @@ jobs:
 
           echo "SSM CommandId: $CMD_ID"
 
-          # Wait for completion and fail if the remote script failed
+          # Wait for completion and propagate result
           while true; do
             STATUS=$(aws ssm list-command-invocations \
               --command-id "$CMD_ID" --details \
@@ -351,8 +359,6 @@ jobs:
             echo "::error::Deploy command failed on instance $INSTANCE_ID"
             exit 1
           fi
-
-
 
   # ───────────────────────────────────────── Verify (unchanged) ─────────────────────────────────────────
   verify:
