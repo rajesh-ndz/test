@@ -1,27 +1,92 @@
-testing
+# testing
 
-NODE_ENV=production
-APP_NAME=idlms-license-api
+# NODE_ENV=production
+# APP_NAME=idlms-license-api
 
-# three app ports (compose + NLB expect these)
+# # three app ports (compose + NLB expect these)
+# PORT=4000
+# PORT1=4001
+# PORT2=4002
+
+# AWS_REGION=ap-southeast-1
+# AWS_DEFAULT_REGION=ap-southeast-1
+# S3_ARTIFACT_BUCKET=test-s3-idlmreplatforming-artifact
+# CLOUDWATCH_LOG_GROUP=/dev/docker/api
+# TZ=Asia/Singapore
+
+# # REPLACE all placeholders below
+# DB_HOST=<rds-endpoint.rds.amazonaws.com>
+# DB_PORT=5432
+# DB_NAME=<dbname>
+# DB_USER=<dbuser>
+# DB_PASSWORD=<dbpass>
+
+# JWT_SECRET=<openssl rand -base64 32>
+# JWT_EXPIRES_IN=1d
+
+# LOG_LEVEL=info
+
+# ── App Basics ────────────────────────────────────────────────────────────────
 PORT=4000
 PORT1=4001
 PORT2=4002
+APP_NAME="IDLMS"
+NODE_ENV="development"
+SALT_ROUNDS=10
+AUTO_RUN_MIGRATIONS=true
 
-AWS_REGION=ap-southeast-1
-AWS_DEFAULT_REGION=ap-southeast-1
-S3_ARTIFACT_BUCKET=test-s3-idlmreplatforming-artifact
-CLOUDWATCH_LOG_GROUP=/dev/docker/api
-TZ=Asia/Singapore
+# ── Auth/JWT ─────────────────────────────────────────────────────────────────
+JWT_SECRET="a2c83f1e0c7b4d9fa0b7e3c5f9a1d2c3"
+API_CLIENT_JWT_EXPIRES_IN="23h"
 
-# REPLACE all placeholders below
-DB_HOST=<rds-endpoint.rds.amazonaws.com>
+# OTP (for login)
+OTP_LOGIN_KEY="8f7e6d5c4b3a2910e0f1a2b3c4d5e6f7"
+# seconds
+OTP_LOGIN_EXPIRED_TIME="300"
+JWT_OTP_KEY="8f7e6d5c4b3a2910e0f1a2b3c4d5e6f7"
+JWT_OTP_LOGIN_EXPIRED_TIME="5m"
+
+# ── Database (PostgreSQL) ────────────────────────────────────────────────────
+DB_HOST=13.220.68.106
 DB_PORT=5432
-DB_NAME=<dbname>
-DB_USER=<dbuser>
-DB_PASSWORD=<dbpass>
+DB_USERNAME=postgres
+DB_PASSWORD="yourpassword"
+DB_NAME=license
+# DATABASE_URL="postgres://${DB_USERNAME}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
 
-JWT_SECRET=<openssl rand -base64 32>
-JWT_EXPIRES_IN=1d
+# ── Email / SMTP ─────────────────────────────────────────────────────────────
+EMAIL_HOST="smtp.mailgun.org"
+EMAIL_PORT="587"
+EMAIL_SECURE="starttls"
+EMAIL_USER="postmaster@sandboxXXXXXXXXXXXX.mailgun.org"
+EMAIL_PASS="mg_super_secret_change_me"
+EMAIL_SENDER="IDLMS <support@idlms.com>"
 
-LOG_LEVEL=info
+# ── URLs & CORS ──────────────────────────────────────────────────────────────
+ORIGINS="http://localhost:3000,http://localhost:4000"
+LOCAL_URL="http://localhost:4000"
+STAGING_URL="https://4xe7nfe37a.execute-api.ap-southeast-1.amazonaws.com/dev-idms"
+API_BASE_URL="https://4xe7nfe37a.execute-api.ap-southeast-1.amazonaws.com/dev-idms"
+
+# ── Transactions / Payments (placeholders) ───────────────────────────────────
+PAYMENT_KEY="pay_test_change_me"
+API_OPERATION="charge"
+USERNAME="idlms_api_user"
+SECRETE="change_me_secret"
+MERCHANT="IDLMS"
+INTERACTION_OPERETION="verify"
+MERCHANT_NAME="IDLMS Ltd"
+
+# ── NIN Integration (placeholders) ───────────────────────────────────────────
+NIN_ENDPOINT="https://api.nin.example.com"
+NIN_API_KEY="nin_api_key_change_me"
+NIN_API_SECRETE="nin_api_secret_change_me"
+NIN_VERIFICATION="/v1/verify"
+NIN_AUTH_USERNAME="idlms_nin_user"
+NIN_AUTH_PASSWORD="nin_password_change_me"
+
+# ── AWS / S3 / SQS ───────────────────────────────────────────────────────────
+ATTACHMENT_S3_BUCKET="test-s3-idlmreplatforming-artifact"
+APP_AWS_REGION="ap-southeast-1"
+APP_AWS_ACCOUNT_ID="592776312448"
+APP_AWS_NOTIFICATIONS_QUEUE_NAME="idlms-notifications-queue"
