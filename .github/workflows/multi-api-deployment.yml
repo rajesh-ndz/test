@@ -15,8 +15,6 @@ env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   TF_BUCKET: test-s3-idlmreplatforming-tfstate
 
-
-
 jobs:
   # ───────────────────────────── Build Image (only when no tag provided) ─────────────────────────────
   build_image:
@@ -72,13 +70,12 @@ jobs:
           BUILD_TAG="${DATE_TAG}.${BUILD_NUM}"
           IMAGE_URI="${ECR_REPO_URL}:${BUILD_TAG}"
           LATEST_URI="${ECR_REPO_URL}:latest"
-
-          echo "BUILD_TAG=$BUILD_TAG"           >> $GITHUB_OUTPUT
-          echo "IMAGE_URI=$IMAGE_URI"           >> $GITHUB_OUTPUT
-          echo "LATEST_URI=$LATEST_URI"         >> $GITHUB_OUTPUT
-          echo "BUILD_TAG=$BUILD_TAG"           >> $GITHUB_ENV
-          echo "IMAGE_URI=$IMAGE_URI"           >> $GITHUB_ENV
-          echo "LATEST_URI=$LATEST_URI"         >> $GITHUB_ENV
+          echo "BUILD_TAG=$BUILD_TAG"   >> $GITHUB_OUTPUT
+          echo "IMAGE_URI=$IMAGE_URI"   >> $GITHUB_OUTPUT
+          echo "LATEST_URI=$LATEST_URI" >> $GITHUB_OUTPUT
+          echo "BUILD_TAG=$BUILD_TAG"   >> $GITHUB_ENV
+          echo "IMAGE_URI=$IMAGE_URI"   >> $GITHUB_ENV
+          echo "LATEST_URI=$LATEST_URI" >> $GITHUB_ENV
 
       - name: Build and tag Docker image
         run: docker build -t "$IMAGE_URI" -t "$LATEST_URI" -f docker/Dockerfile src
@@ -91,8 +88,8 @@ jobs:
   # ─────────────────────────────────────────── Deploy ───────────────────────────────────────────
   deploy:
     runs-on: ubuntu-latest
-    needs: [build_image]
-    if: ${{ always() }}   # ensure deploy runs even if build_image was skipped
+    needs: [build_image]             # still available when build is skipped
+    if: ${{ always() }}              # ensure deploy runs even if build was skipped
     environment: ${{ github.event.inputs.ENV || 'stage' }}
     permissions:
       id-token: write
@@ -120,7 +117,6 @@ jobs:
       - name: Set dynamic backup bucket name
         run: echo "BACKUP_BUCKET=test-s3-idlmreplatforming-artifact" >> $GITHUB_ENV
 
-      # (Keep your Terraform applies here; unchanged except compact for brevity)
       - name: Terraform Apply VPC
         run: |
           cd infra/vpc
@@ -146,7 +142,7 @@ jobs:
           terraform init -backend-config="bucket=${TF_BUCKET}" -backend-config="key=${{ github.event.inputs.ENV }}/cloudwatch/terraform.tfstate" -backend-config="region=${AWS_REGION}"
           terraform apply -auto-approve -var-file="${{ github.event.inputs.ENV }}.tfvars"
 
-      - name: Terraform Apply ECR (for URL during deploy path when build skipped)
+      - name: Terraform Apply ECR (ensure URL even when build skipped)
         id: ecr
         run: |
           set -euo pipefail
@@ -197,64 +193,6 @@ jobs:
           echo "TAG_TO_DEPLOY=$TAG" >> $GITHUB_ENV
           echo "Deploying tag: $TAG"
 
-      # - name: Deploy containers with rollback logic via SSM
-      #   run: |
-      #     TAG_TO_DEPLOY="${{ env.TAG_TO_DEPLOY }}"
-      #     ENV="${{ github.event.inputs.ENV }}"
-      #     ECR_REPO_URL="${{ env.ECR_REPO_URL }}"
-      #     AWS_REGION="${{ env.AWS_REGION }}"
-      #     BACKUP_BUCKET="${{ env.BACKUP_BUCKET }}"
-
-      #     INSTANCE_ID=$(aws ec2 describe-instances \
-      #       --filters "Name=tag:Name,Values=Backend API IDLMS-${ENV}" "Name=instance-state-name,Values=running" \
-      #       --query "Reservations[].Instances[].InstanceId" \
-      #       --region "$AWS_REGION" \
-      #       --output text)
-      #     if [ -z "$INSTANCE_ID" ]; then
-      #       echo "ERROR: No running EC2 instance found for environment $ENV"
-      #       exit 1
-      #     fi
-
-      #     aws ssm send-command \
-      #       --document-name "AWS-RunShellScript" \
-      #       --instance-ids "$INSTANCE_ID" \
-      #       --comment "Deploy containers with rollback logic" \
-      #       --parameters 'commands=[
-      #         "set -e",
-      #         "cd /home/ubuntu",
-      #         "ENV_CONTENT=$(aws ssm get-parameter --name \"/idlms/shared/'"$ENV"'/.env\" --with-decryption --query \"Parameter.Value\" --output text)",
-      #         "echo \"$ENV_CONTENT\" > .env",
-      #         "echo \"BUILD_TAG='"$TAG_TO_DEPLOY"'\" >> .env",
-      #         "echo \"IMAGE_REPO='"$ECR_REPO_URL"'\" >> .env",
-      #         "aws s3 cp s3://'"$BACKUP_BUCKET"'/'"$ENV"'/docker-compose.yml docker-compose.yml",
-      #         "if ! command -v docker &> /dev/null; then sudo apt-get update -y && sudo apt-get install -y docker.io; fi",
-      #         "if ! command -v docker-compose &> /dev/null; then curl -L \"https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)\" -o /usr/local/bin/docker-compose && chmod +x /usr/local/bin/docker-compose && ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose || true; fi",
-      #         "aws ecr get-login-password --region '"$AWS_REGION"' | docker login --username AWS --password-stdin '"${ECR_REPO_URL%/*}"'",
-      #         "docker-compose --env-file .env down || true",
-      #         "docker rmi ${IMAGE_REPO}:${BUILD_TAG} || true",
-      #         "docker-compose --env-file .env pull --ignore-pull-failures",
-      #         "docker-compose --env-file .env up -d --force-recreate",
-      #         "sleep 60",
-      #         "RUNNING_CONTAINERS=$(docker ps --format '{{.Names}}' | grep -E \\\"api1|api2|api3\\\" | wc -l) && \
-      #         if [ \\\"$RUNNING_CONTAINERS\\\" -ne 3 ]; then \
-      #          echo \\\"Deployment failed. Rolling back...\\\"; \
-      #          PREV_TAG=$(aws ssm get-parameter --name \\\"/idlms/license-api/last-successful-build\\\" --query \\\"Parameter.Value\\\" --output text); \
-      #          echo \\\"Rolling back to tag: $PREV_TAG\\\"; \
-      #          sed -i \\\"/BUILD_TAG=/d\\\" .env; \
-      #          echo \\\"BUILD_TAG=$PREV_TAG\\\" >> .env; \
-      #          docker-compose --env-file .env down || true; \
-      #          docker rmi ${IMAGE_REPO}:${BUILD_TAG} || true; \
-      #          docker-compose --env-file .env pull --ignore-pull-failures; \
-      #          docker-compose --env-file .env up -d --force-recreate; \
-      #        else \
-      #          echo \\\"All containers are up. Saving $TAG_TO_DEPLOY as last-successful-build...\\\"; \
-      #          aws ssm put-parameter --name \\\"/idlms/license-api/last-successful-build\\\" --value \\\"$TAG_TO_DEPLOY\\\" --type String --overwrite; \
-      #        fi"
-      #      ]' \
-      #      --timeout-seconds 900 \
-      #      --region "$AWS_REGION"
-
-
       - name: Deploy containers with rollback logic via SSM
         shell: bash
         run: |
@@ -264,6 +202,7 @@ jobs:
           ECR_REPO_URL="${{ env.ECR_REPO_URL }}"
           AWS_REGION="${{ env.AWS_REGION }}"
           BACKUP_BUCKET="${{ env.BACKUP_BUCKET }}"
+          REGISTRY="${ECR_REPO_URL%/*}"
 
           INSTANCE_ID=$(aws ec2 describe-instances \
             --filters "Name=tag:Name,Values=Backend API IDLMS-${ENV}" "Name=instance-state-name,Values=running" \
@@ -275,32 +214,25 @@ jobs:
             exit 1
           fi
 
-          # Build SSM payload safely (runner expands only our literals; no subshells run on runner)
+          # Build SSM payload with only runner-known literals (no ${IMAGE_REPO}/${BUILD_TAG} in payload)
           cat > deploy.json <<JSON
           {
             "commands": [
               "set -e",
               "cd /home/ubuntu",
 
-              # Pull env straight from SSM into a file (no intermediate shell var)
               "aws ssm get-parameter --name \"/idlms/shared/${ENV}/.env\" --with-decryption --region ${AWS_REGION} --query \"Parameter.Value\" --output text > .env",
               "echo \"BUILD_TAG=${TAG_TO_DEPLOY}\" >> .env",
               "echo \"IMAGE_REPO=${ECR_REPO_URL}\" >> .env",
-              "export BUILD_TAG=${TAG_TO_DEPLOY}",
-              "export IMAGE_REPO=${ECR_REPO_URL}",
 
               "aws s3 cp s3://${BACKUP_BUCKET}/${ENV}/docker-compose.yml docker-compose.yml",
 
               "if ! command -v docker &> /dev/null; then sudo apt-get update -y && sudo apt-get install -y docker.io; fi",
               "if ! command -v docker-compose &> /dev/null; then curl -L \"https://github.com/docker/compose/releases/download/1.29.2/docker-compose-\\$(uname -s)-\\$(uname -m)\" -o /usr/local/bin/docker-compose && chmod +x /usr/local/bin/docker-compose && ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose || true; fi",
 
-              "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REPO_URL%/*}",
+              "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${REGISTRY}",
 
               "docker-compose --env-file .env down || true",
-
-              # OPTIONAL: you can remove this rmi line to simplify further
-              "docker rmi \\${IMAGE_REPO}:\\${BUILD_TAG} || true",
-
               "docker-compose --env-file .env pull --ignore-pull-failures",
               "docker-compose --env-file .env up -d --force-recreate",
               "sleep 60",
@@ -312,9 +244,7 @@ jobs:
                   echo \"Rolling back to tag: \\$PREV_TAG\"; \
                   sed -i \"/BUILD_TAG=/d\" .env; \
                   echo \"BUILD_TAG=\\$PREV_TAG\" >> .env; \
-                  export BUILD_TAG=\\$PREV_TAG; \
                   docker-compose --env-file .env down || true; \
-                  docker rmi \\${IMAGE_REPO}:\\${BUILD_TAG} || true; \
                   docker-compose --env-file .env pull --ignore-pull-failures; \
                   docker-compose --env-file .env up -d --force-recreate; \
                 else \
@@ -360,7 +290,7 @@ jobs:
             exit 1
           fi
 
-  # ───────────────────────────────────────── Verify (unchanged) ─────────────────────────────────────────
+  # ───────────────────────────────────────── Verify ─────────────────────────────────────────
   verify:
     name: Post-deploy health check
     runs-on: ubuntu-latest
