@@ -91,8 +91,8 @@ jobs:
   # ─────────────────────────────────────────── Deploy ───────────────────────────────────────────
   deploy:
     runs-on: ubuntu-latest
-    needs: [build_image]   # still runs if build_image was skipped
-    if: ${{ needs.build_image.result == 'success' || needs.build_image.result == 'skipped' }}
+    needs: [build_image]
+    if: ${{ always() }}   # ensure deploy runs even if build_image was skipped
     environment: ${{ github.event.inputs.ENV || 'stage' }}
     permissions:
       id-token: write
