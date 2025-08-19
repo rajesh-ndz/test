@@ -20,7 +20,7 @@ env:
 jobs:
   # ───────────────────────────── Build Image (only when no tag provided) ─────────────────────────────
   build_image:
-    if: ${{ github.event.inputs.ROLLBACK_TAG == '' }}
+    if: ${{ !github.event.inputs.ROLLBACK_TAG }}
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.ENV || 'stage' }}
     permissions:
