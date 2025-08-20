@@ -1,21 +1,32 @@
-name: Deploy Multi License API with Rollback Options
+name: Deploy Multi License API with Rollback Options (single)
 
 on:
   workflow_dispatch:
     inputs:
       ENV:
-        description: 'Environment to deploy (dev/staging/prod)'
+        description: "Environment to deploy (dev/staging/prod)"
         required: true
         default: "dev"
       ROLLBACK_TAG:
-        description: 'If set (latest or 2025.06.30.02), deploy that tag without building'
+        description: "If set (latest or 2025.06.30.002), deploy that tag without building"
         required: false
+      GIT_REF:
+        description: "Git ref/branch to use for code & TF"
+        required: false
+        default: "feature/btl-77"
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   TF_BUCKET: test-s3-idlmreplatforming-tfstate
+  BACKUP_BUCKET: test-s3-idlmreplatforming-artifact
 
+permissions:
+  id-token: write
+  contents: read
 
+concurrency:
+  group: deploy-single-${{ github.event.inputs.ENV }}
+  cancel-in-progress: false
 
 jobs:
   # ───────────────────────────── Build Image (only when no tag provided) ─────────────────────────────
@@ -23,19 +34,15 @@ jobs:
     if: ${{ !github.event.inputs.ROLLBACK_TAG }}
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.ENV || 'stage' }}
-    permissions:
-      id-token: write
-      contents: read
     outputs:
       build_tag: ${{ steps.tags.outputs.BUILD_TAG }}
       image_uri: ${{ steps.tags.outputs.IMAGE_URI }}
       latest_uri: ${{ steps.tags.outputs.LATEST_URI }}
-
     steps:
-      - name: Checkout feature/btl-77 codebase
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: feature/btl-77
+          ref: ${{ github.event.inputs.GIT_REF }}
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v3
@@ -50,15 +57,19 @@ jobs:
           terraform_version: 1.5.0
           terraform_wrapper: false
 
-      - name: Ensure/Output ECR repo (build job)
+      - name: Ensure/Output ECR repo (build path)
         id: ecr
         run: |
           set -euo pipefail
-          terraform -chdir=infra/ecr init -backend-config="bucket=${{ env.TF_BUCKET }}" -backend-config="key=${{ github.event.inputs.ENV }}/ecr/terraform.tfstate" -backend-config="region=${{ env.AWS_REGION }}"
+          terraform -chdir=infra/ecr init \
+            -backend-config="bucket=${{ env.TF_BUCKET }}" \
+            -backend-config="key=${{ github.event.inputs.ENV }}/ecr/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}"
           terraform -chdir=infra/ecr apply -auto-approve -var-file="${{ github.event.inputs.ENV }}.tfvars"
           ECR_REPO_URL=$(terraform -chdir=infra/ecr output -raw ecr_repository_url | tr -d '\r')
           echo "ECR_REPO_URL=$ECR_REPO_URL" >> "$GITHUB_ENV"
           echo "Using ECR: $ECR_REPO_URL"
+
       - name: Log in to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
@@ -71,12 +82,10 @@ jobs:
           BUILD_TAG="${DATE_TAG}.${BUILD_NUM}"
           IMAGE_URI="${ECR_REPO_URL}:${BUILD_TAG}"
           LATEST_URI="${ECR_REPO_URL}:latest"
-          echo "BUILD_TAG=$BUILD_TAG"           >> $GITHUB_OUTPUT
-          echo "IMAGE_URI=$IMAGE_URI"           >> $GITHUB_OUTPUT
-          echo "LATEST_URI=$LATEST_URI"         >> $GITHUB_OUTPUT
-          echo "BUILD_TAG=$BUILD_TAG"           >> $GITHUB_ENV
-          echo "IMAGE_URI=$IMAGE_URI"           >> $GITHUB_ENV
-          echo "LATEST_URI=$LATEST_URI"         >> $GITHUB_ENV
+          echo "BUILD_TAG=$BUILD_TAG"   | tee -a $GITHUB_ENV >> $GITHUB_OUTPUT
+          echo "IMAGE_URI=$IMAGE_URI"  | tee -a $GITHUB_ENV >> $GITHUB_OUTPUT
+          echo "LATEST_URI=$LATEST_URI"| tee -a $GITHUB_ENV >> $GITHUB_OUTPUT
+
       - name: Build and tag Docker image
         run: docker build -t "$IMAGE_URI" -t "$LATEST_URI" -f docker/Dockerfile src
 
@@ -84,27 +93,18 @@ jobs:
         run: |
           docker push "$IMAGE_URI"
           docker push "$LATEST_URI"
-  # ─────────────────────────────────────────── Deploy ───────────────────────────────────────────
-  deploy:
-    runs-on: ubuntu-latest
-    needs: [build_image]
-    if: ${{ always() }}   # ensure deploy runs even if build_image was skipped
-    environment: ${{ github.event.inputs.ENV || 'stage' }}
-    permissions:
-      id-token: write
-      contents: read
 
+  # ─────────────────────────────── Provision Infra (always) ───────────────────────────────
+  provision_infra:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.ENV || 'stage' }}
+    outputs:
+      ecr_repo_url: ${{ steps.ecr.outputs.ECR_REPO_URL }}
     steps:
-      - name: Checkout feature/btl-77 codebase
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: feature/btl-77
-
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.5.0
-          terraform_wrapper: false
+          ref: ${{ github.event.inputs.GIT_REF }}
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v3
@@ -113,41 +113,50 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Set dynamic backup bucket name
-        run: echo "BACKUP_BUCKET=test-s3-idlmreplatforming-artifact" >> $GITHUB_ENV
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+          terraform_wrapper: false
 
-      # (Keep your Terraform applies here; unchanged except compact for brevity)
       - name: Terraform Apply VPC
         run: |
           cd infra/vpc
           terraform init -backend-config="bucket=${TF_BUCKET}" -backend-config="key=${{ github.event.inputs.ENV }}/vpc/terraform.tfstate" -backend-config="region=${AWS_REGION}"
           terraform apply -auto-approve -var-file="${{ github.event.inputs.ENV }}.tfvars"
+
       - name: Terraform Apply NLB
         run: |
           cd infra/nlb
           terraform init -backend-config="bucket=${TF_BUCKET}" -backend-config="key=${{ github.event.inputs.ENV }}/nlb/terraform.tfstate" -backend-config="region=${AWS_REGION}"
           terraform apply -auto-approve -var-file="${{ github.event.inputs.ENV }}.tfvars"
+
       - name: Terraform Apply API Gateway
         run: |
           cd infra/rest-api
           terraform init -backend-config="bucket=${TF_BUCKET}" -backend-config="key=${{ github.event.inputs.ENV }}/rest-api/terraform.tfstate" -backend-config="region=${AWS_REGION}"
           terraform refresh -var-file="${{ github.event.inputs.ENV }}.tfvars"
           terraform apply -auto-approve -var-file="${{ github.event.inputs.ENV }}.tfvars"
+
       - name: Terraform Apply CloudWatch
         run: |
           cd infra/cloudwatch
           terraform init -backend-config="bucket=${TF_BUCKET}" -backend-config="key=${{ github.event.inputs.ENV }}/cloudwatch/terraform.tfstate" -backend-config="region=${AWS_REGION}"
           terraform apply -auto-approve -var-file="${{ github.event.inputs.ENV }}.tfvars"
-      - name: Terraform Apply ECR (for URL during deploy path when build skipped)
+
+      - name: Terraform Apply ECR (ensure repo, output URL)
         id: ecr
         run: |
           set -euo pipefail
-          terraform -chdir=infra/ecr init -backend-config="bucket=${TF_BUCKET}" -backend-config="key=${{ github.event.inputs.ENV }}/ecr/terraform.tfstate" -backend-config="region=${AWS_REGION}"
+          terraform -chdir=infra/ecr init \
+            -backend-config="bucket=${TF_BUCKET}" \
+            -backend-config="key=${{ github.event.inputs.ENV }}/ecr/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}"
           terraform -chdir=infra/ecr apply -auto-approve -var-file="${{ github.event.inputs.ENV }}.tfvars"
           ECR_REPO_URL=$(terraform -chdir=infra/ecr output -raw ecr_repository_url | tr -d '\r')
-          echo "ECR_REPO_URL=$ECR_REPO_URL" >> "$GITHUB_ENV"
-          echo "Using ECR: $ECR_REPO_URL"
-      - name: Terraform Apply SSM
+          echo "ECR_REPO_URL=$ECR_REPO_URL" | tee -a "$GITHUB_ENV" >> "$GITHUB_OUTPUT"
+
+      - name: Terraform Apply SSM (.env blob)
         id: ssm
         run: |
           cd infra/ssm
@@ -162,15 +171,107 @@ jobs:
           terraform apply -auto-approve -var-file="${{ github.event.inputs.ENV }}.tfvars" -var="app_env_content=${BASE64_ENV}"
           SSM_ENV_PARAM=$(terraform output -raw ssm_env_param_name | tr -d '\r\n' | sed 's/^ssm:\/\///')
           echo "SSM_ENV_PARAM=$SSM_ENV_PARAM" >> $GITHUB_ENV
-      - name: Terraform Apply S3
+
+      - name: Terraform Apply S3 (artifacts)
         run: |
           cd infra/s3
           terraform init -backend-config="bucket=${TF_BUCKET}" -backend-config="key=${{ github.event.inputs.ENV }}/s3/terraform.tfstate" -backend-config="region=${AWS_REGION}"
           terraform apply -auto-approve -var-file="${{ github.event.inputs.ENV }}.tfvars"
+
+      # ───── Gather + publish outputs so you can find EC2/VPC/etc. ─────
+      - name: Gather Terraform outputs (JSON)
+        id: gather
+        run: |
+          set -euo pipefail
+          ENV="${{ github.event.inputs.ENV }}"
+          jq -n \
+            --arg env "$ENV" \
+            --arg region "${AWS_REGION}" \
+            --arg ecr "$(terraform -chdir=infra/ecr output -raw ecr_repository_url)" \
+            --argjson vpc "$(terraform -chdir=infra/vpc        output -json)" \
+            --argjson nlb "$(terraform -chdir=infra/nlb        output -json)" \
+            --argjson api "$(terraform -chdir=infra/rest-api   output -json)" \
+            --argjson cw  "$(terraform -chdir=infra/cloudwatch output -json)" \
+            --argjson s3  "$(terraform -chdir=infra/s3         output -json)" \
+            '{
+              env: $env,
+              region: $region,
+              ecr_repository_url: $ecr,
+              vpc: $vpc,
+              nlb: $nlb,
+              api_gateway: $api,
+              cloudwatch: $cw,
+              s3: $s3
+            }' | tee infra-outputs.json
+
+      - name: Upload infra outputs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: infra-outputs-${{ github.event.inputs.ENV }}
+          path: infra-outputs.json
+          if-no-files-found: error
+
+      - name: Job summary (quick links)
+        run: |
+          OUT=infra-outputs.json
+          REGION="${{ env.AWS_REGION }}"
+          VPC_ID=$(jq -r '.vpc.vpc_id.value // empty' $OUT)
+          API_ID=$(jq -r '.api_gateway.api_id.value // empty' $OUT)
+          NLB_DNS=$(jq -r '.nlb.nlb_dns.value // empty' $OUT)
+
+          {
+            echo "## Infra Outputs ($REGION)"
+            echo ""
+            echo "| Resource | Value |"
+            echo "|---|---|"
+            [ -n "$VPC_ID" ] && echo "| VPC ID | \`$VPC_ID\` |"
+            [ -n "$NLB_DNS" ] && echo "| NLB DNS | \`$NLB_DNS\` |"
+            [ -n "$API_ID" ]  && echo "| API Gateway ID | \`$API_ID\` |"
+            echo ""
+            [ -n "$VPC_ID" ] && echo "- VPC: https://${REGION}.console.aws.amazon.com/vpcconsole/home?region=${REGION}#vpcs:search=${VPC_ID}"
+            [ -n "$API_ID" ] && echo "- API Gateway: https://${REGION}.console.aws.amazon.com/apigateway/main/apis/${API_ID}/resources?region=${REGION}"
+          } >> $GITHUB_STEP_SUMMARY
+
+  # ─────────────────────────────────────────── Deploy ───────────────────────────────────────────
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [build_image, provision_infra]
+    if: ${{ always() }}   # ensure deploy runs even if build_image was skipped
+    environment: ${{ github.event.inputs.ENV || 'stage' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.GIT_REF }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+          terraform_wrapper: false
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Ensure ECR (deploy path) & export URL
+        id: ecr
+        run: |
+          set -euo pipefail
+          terraform -chdir=infra/ecr init -backend-config="bucket=${TF_BUCKET}" -backend-config="key=${{ github.event.inputs.ENV }}/ecr/terraform.tfstate" -backend-config="region=${AWS_REGION}"
+          terraform -chdir=infra/ecr apply -auto-approve -var-file="${{ github.event.inputs.ENV }}.tfvars"
+          ECR_REPO_URL=$(terraform -chdir=infra/ecr output -raw ecr_repository_url | tr -d '\r')
+          echo "ECR_REPO_URL=$ECR_REPO_URL" >> "$GITHUB_ENV"
+          echo "Using ECR: $ECR_REPO_URL"
+
       - name: Upload docker-compose.yml to S3
         run: |
-          echo "Uploading to bucket: $BACKUP_BUCKET"
-          aws s3 cp docker/docker-compose.yml s3://$BACKUP_BUCKET/${{ github.event.inputs.ENV }}/docker-compose.yml
+          echo "Uploading docker-compose.yml to s3://${BACKUP_BUCKET}/${{ github.event.inputs.ENV }}/docker-compose.yml"
+          aws s3 cp docker/docker-compose.yml s3://${BACKUP_BUCKET}/${{ github.event.inputs.ENV }}/docker-compose.yml
+
       - name: Log in to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
@@ -179,13 +280,17 @@ jobs:
         run: |
           if [ -n "${{ github.event.inputs.ROLLBACK_TAG }}" ]; then
             TAG="${{ github.event.inputs.ROLLBACK_TAG }}"
-          else
+          elif [ -n "${{ needs.build_image.outputs.build_tag }}" ]; then
             TAG="${{ needs.build_image.outputs.build_tag }}"
+          else
+            TAG="latest"
           fi
-          echo "TAG_TO_DEPLOY=$TAG" >> $GITHUB_ENV
+          echo "TAG_TO_DEPLOY=$TAG" | tee -a $GITHUB_OUTPUT >> $GITHUB_ENV
           echo "Deploying tag: $TAG"
+
       - name: Deploy containers with rollback logic via SSM
         run: |
+          set -euo pipefail
           TAG_TO_DEPLOY="${{ env.TAG_TO_DEPLOY }}"
           ENV="${{ github.event.inputs.ENV }}"
           ECR_REPO_URL="${{ env.ECR_REPO_URL }}"
@@ -238,19 +343,14 @@ jobs:
            ]' \
            --timeout-seconds 900 \
            --region "$AWS_REGION"
-  # ───────────────────────────────────────── Verify (unchanged) ─────────────────────────────────────────
+
+  # ───────────────────────────────────────── Verify ─────────────────────────────────────────
   verify:
     name: Post-deploy health check
     runs-on: ubuntu-latest
     needs: deploy
     if: ${{ always() && (needs.build_image.result == 'success' || needs.build_image.result == 'skipped') }}
     environment: ${{ github.event.inputs.ENV || 'stage' }}
-    permissions:
-      id-token: write
-      contents: read
-    env:
-      AWS_REGION: ${{ vars.AWS_REGION }}
-
     steps:
       - name: Guard AWS_REGION
         run: |
@@ -258,6 +358,7 @@ jobs:
             echo "::error::AWS_REGION is empty. Define repo/env variable AWS_REGION or set a default."
             exit 1
           fi
+
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v3
         with:
