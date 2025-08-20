@@ -29,7 +29,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # ───────────────────────────── Build Image (only when no tag provided) ─────────────────────────────
+  # ───────────────────────────── Build Image (only when no rollback tag) ─────────────────────────────
   build_image:
     if: ${{ !github.event.inputs.ROLLBACK_TAG }}
     runs-on: ubuntu-latest
@@ -62,9 +62,9 @@ jobs:
         run: |
           set -euo pipefail
           terraform -chdir=infra/ecr init \
-            -backend-config="bucket=${{ env.TF_BUCKET }}" \
+            -backend-config="bucket=${TF_BUCKET}" \
             -backend-config="key=${{ github.event.inputs.ENV }}/ecr/terraform.tfstate" \
-            -backend-config="region=${{ env.AWS_REGION }}"
+            -backend-config="region=${AWS_REGION}"
           terraform -chdir=infra/ecr apply -auto-approve -var-file="${{ github.event.inputs.ENV }}.tfvars"
           ECR_REPO_URL=$(terraform -chdir=infra/ecr output -raw ecr_repository_url | tr -d '\r')
           echo "ECR_REPO_URL=$ECR_REPO_URL" >> "$GITHUB_ENV"
@@ -82,9 +82,9 @@ jobs:
           BUILD_TAG="${DATE_TAG}.${BUILD_NUM}"
           IMAGE_URI="${ECR_REPO_URL}:${BUILD_TAG}"
           LATEST_URI="${ECR_REPO_URL}:latest"
-          echo "BUILD_TAG=$BUILD_TAG"   | tee -a $GITHUB_ENV >> $GITHUB_OUTPUT
-          echo "IMAGE_URI=$IMAGE_URI"  | tee -a $GITHUB_ENV >> $GITHUB_OUTPUT
-          echo "LATEST_URI=$LATEST_URI"| tee -a $GITHUB_ENV >> $GITHUB_OUTPUT
+          echo "BUILD_TAG=$BUILD_TAG"    | tee -a "$GITHUB_ENV" >> "$GITHUB_OUTPUT"
+          echo "IMAGE_URI=$IMAGE_URI"   | tee -a "$GITHUB_ENV" >> "$GITHUB_OUTPUT"
+          echo "LATEST_URI=$LATEST_URI" | tee -a "$GITHUB_ENV" >> "$GITHUB_OUTPUT"
 
       - name: Build and tag Docker image
         run: docker build -t "$IMAGE_URI" -t "$LATEST_URI" -f docker/Dockerfile src
@@ -187,12 +187,12 @@ jobs:
           jq -n \
             --arg env "$ENV" \
             --arg region "${AWS_REGION}" \
-            --arg ecr "$(terraform -chdir=infra/ecr output -raw ecr_repository_url)" \
-            --argjson vpc "$(terraform -chdir=infra/vpc        output -json)" \
-            --argjson nlb "$(terraform -chdir=infra/nlb        output -json)" \
-            --argjson api "$(terraform -chdir=infra/rest-api   output -json)" \
-            --argjson cw  "$(terraform -chdir=infra/cloudwatch output -json)" \
-            --argjson s3  "$(terraform -chdir=infra/s3         output -json)" \
+            --arg ecr "$(terraform -chdir=infra/ecr output -raw ecr_repository_url 2>/dev/null || echo '')" \
+            --argjson vpc "$(terraform -chdir=infra/vpc        output -json 2>/dev/null || echo '{}')" \
+            --argjson nlb "$(terraform -chdir=infra/nlb        output -json 2>/dev/null || echo '{}')" \
+            --argjson api "$(terraform -chdir=infra/rest-api   output -json 2>/dev/null || echo '{}')" \
+            --argjson cw  "$(terraform -chdir=infra/cloudwatch output -json 2>/dev/null || echo '{}')" \
+            --argjson s3  "$(terraform -chdir=infra/s3         output -json 2>/dev/null || echo '{}')" \
             '{
               env: $env,
               region: $region,
@@ -212,27 +212,47 @@ jobs:
           if-no-files-found: error
 
       - name: Job summary (quick links)
+        if: always()
+        shell: bash
         run: |
+          set -uo pipefail
           OUT=infra-outputs.json
           REGION="${{ env.AWS_REGION }}"
-          VPC_ID=$(jq -r '.vpc.vpc_id.value // empty' $OUT)
-          API_ID=$(jq -r '.api_gateway.api_id.value // empty' $OUT)
-          NLB_DNS=$(jq -r '.nlb.nlb_dns.value // empty' $OUT)
+
+          # default to empty if keys are missing
+          VPC_ID=$(jq -r '.vpc.vpc_id.value // empty'         "$OUT" 2>/dev/null || true)
+          API_ID=$(jq -r '.api_gateway.api_id.value // empty' "$OUT" 2>/dev/null || true)
+          NLB_DNS=$(jq -r '.nlb.nlb_dns.value // empty'       "$OUT" 2>/dev/null || true)
+
+          # if file missing or all empty, try best-effort discovery (won't fail step)
+          if [ ! -s "$OUT" ] || { [ -z "$VPC_ID" ] && [ -z "$API_ID" ] && [ -z "$NLB_DNS" ]; }; then
+            echo "infra-outputs.json missing or empty; attempting fallback discovery..." >&2
+            # Try by conventional names/tags you use; tweak if your names differ.
+            VPC_ID=${VPC_ID:-$(aws ec2 describe-vpcs \
+              --filters "Name=tag:Name,Values=idlms-${{ github.event.inputs.ENV }}-vpc" \
+              --query "Vpcs[0].VpcId" --output text --region "$REGION" 2>/dev/null || true)}
+            NLB_DNS=${NLB_DNS:-$(aws elbv2 describe-load-balancers \
+              --names "idlms-${{ github.event.inputs.ENV }}-nlb" \
+              --query "LoadBalancers[0].DNSName" --output text --region "$REGION" 2>/dev/null || true)}
+            API_ID=${API_ID:-$(aws apigateway get-rest-apis \
+              --query "items[?contains(name, '${{ github.event.inputs.ENV }}')].id | [0]" \
+              --output text --region "$REGION" 2>/dev/null || true)}
+          fi
 
           {
             echo "## Infra Outputs ($REGION)"
             echo ""
             echo "| Resource | Value |"
             echo "|---|---|"
-            [ -n "$VPC_ID" ] && echo "| VPC ID | \`$VPC_ID\` |"
+            [ -n "$VPC_ID" ]  && echo "| VPC ID | \`$VPC_ID\` |"
             [ -n "$NLB_DNS" ] && echo "| NLB DNS | \`$NLB_DNS\` |"
             [ -n "$API_ID" ]  && echo "| API Gateway ID | \`$API_ID\` |"
             echo ""
             [ -n "$VPC_ID" ] && echo "- VPC: https://${REGION}.console.aws.amazon.com/vpcconsole/home?region=${REGION}#vpcs:search=${VPC_ID}"
             [ -n "$API_ID" ] && echo "- API Gateway: https://${REGION}.console.aws.amazon.com/apigateway/main/apis/${API_ID}/resources?region=${REGION}"
-          } >> $GITHUB_STEP_SUMMARY
+          } >> "$GITHUB_STEP_SUMMARY"
 
-  # ─────────────────────────────────────────── Deploy ───────────────────────────────────────────
+  # ───────────────────────────────────────── Deploy ─────────────────────────────────────────
   deploy:
     runs-on: ubuntu-latest
     needs: [build_image, provision_infra]
@@ -261,7 +281,10 @@ jobs:
         id: ecr
         run: |
           set -euo pipefail
-          terraform -chdir=infra/ecr init -backend-config="bucket=${TF_BUCKET}" -backend-config="key=${{ github.event.inputs.ENV }}/ecr/terraform.tfstate" -backend-config="region=${AWS_REGION}"
+          terraform -chdir=infra/ecr init \
+            -backend-config="bucket=${TF_BUCKET}" \
+            -backend-config="key=${{ github.event.inputs.ENV }}/ecr/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}"
           terraform -chdir=infra/ecr apply -auto-approve -var-file="${{ github.event.inputs.ENV }}.tfvars"
           ECR_REPO_URL=$(terraform -chdir=infra/ecr output -raw ecr_repository_url | tr -d '\r')
           echo "ECR_REPO_URL=$ECR_REPO_URL" >> "$GITHUB_ENV"
@@ -285,7 +308,7 @@ jobs:
           else
             TAG="latest"
           fi
-          echo "TAG_TO_DEPLOY=$TAG" | tee -a $GITHUB_OUTPUT >> $GITHUB_ENV
+          echo "TAG_TO_DEPLOY=$TAG" | tee -a "$GITHUB_OUTPUT" >> "$GITHUB_ENV"
           echo "Deploying tag: $TAG"
 
       - name: Deploy containers with rollback logic via SSM
