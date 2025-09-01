@@ -13,16 +13,14 @@ on:
 
 permissions:
   contents: read
-  id-token: write  # (kept on for easy OIDC switch later)
+  id-token: write
 
 concurrency:
   group: deploy-${{ github.event.inputs.ENV }}
   cancel-in-progress: false
 
 env:
-  # Set this in repo → Settings → Variables → Actions → New Repository variable
-  # Example: ap-south-1
-  AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+  AWS_REGION: ${{ vars.AWS_REGION }}
 
 jobs:
   deploy:
@@ -32,19 +30,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # build what was triggered (don’t hardcode a branch)
           ref: ${{ github.ref }}
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.5.7
+          terraform_wrapper: false   # important
 
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
-      # Keep static keys for now (matches your current setup).
-      # Later you can switch to OIDC by removing keys and using a role-to-assume.
+      - name: Ensure default region if not set
+        run: |
+          if [ -z "${AWS_REGION:-}" ]; then
+            echo "AWS_REGION=ap-south-1" >> "$GITHUB_ENV"
+          fi
+
       - name: Configure AWS Credentials (static keys)
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -63,23 +65,32 @@ jobs:
       - name: Refresh reuse stacks (no-change apply)
         run: |
           set -euo pipefail
-          ROOT="infra/environments/stage/stacks"
+          ROOT="infra/environments/${{ github.event.inputs.ENV }}/stacks"
           for s in network-reuse compute-reuse nlb-reuse ecr-reuse; do
             if [ -d "$ROOT/$s" ]; then
               echo "== $s =="
               terraform -chdir="$ROOT/$s" init -reconfigure -input=false
-              terraform -chdir="$ROOT/$s" plan  -refresh-only -out=tfplan || true
+              terraform -chdir="$ROOT/$s" validate -no-color || true
+              terraform -chdir="$ROOT/$s" plan -refresh-only -no-color -out=tfplan || true
               terraform -chdir="$ROOT/$s" apply -refresh-only -auto-approve tfplan || true
-              rm -f "$ROOT/$s/tfplan"
+              rm -f "$ROOT/$s/tfplan" || true
             else
               echo "skip: $ROOT/$s not present"
             fi
           done
 
+      - name: Read Instance ID from compute-reuse
+        run: |
+          set -euo pipefail
+          INSTANCE_ID=$(terraform -chdir=infra/environments/${{ github.event.inputs.ENV }}/stacks/compute-reuse output -raw instance_id)
+          test -n "$INSTANCE_ID"
+          echo "INSTANCE_ID=$INSTANCE_ID" >> "$GITHUB_ENV"
+          echo "Using INSTANCE_ID=$INSTANCE_ID"
+
       - name: Read ECR repository URL
         run: |
           set -euo pipefail
-          OUT_JSON=$(terraform -chdir=infra/environments/stage/stacks/ecr-reuse output -json repository_urls)
+          OUT_JSON=$(terraform -chdir=infra/environments/${{ github.event.inputs.ENV }}/stacks/ecr-reuse output -json repository_urls)
           ECR_REPO_URL=$(jq -r 'if type=="array" then .[0] else . end' <<<"$OUT_JSON")
           test -n "$ECR_REPO_URL" && [ "$ECR_REPO_URL" != "null" ] || { echo "::error::No ECR repo URL in ecr-reuse outputs"; exit 1; }
           echo "ECR_REPO_URL=$ECR_REPO_URL" >> "$GITHUB_ENV"
@@ -123,17 +134,15 @@ jobs:
           ECR_REPO_URL:  ${{ env.ECR_REPO_URL }}
           TAG_TO_DEPLOY: ${{ env.TAG_TO_DEPLOY }}
           BACKUP_BUCKET: ${{ env.BACKUP_BUCKET }}
+          INSTANCE_ID:   ${{ env.INSTANCE_ID }}
         run: |
           set -euo pipefail
 
-          # Find the EC2 created by platform-main compute stack
-          INSTANCE_ID=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=Backend API IDLMS-${ENV}" "Name=instance-state-name,Values=running" \
-            --query "Reservations[].Instances[].InstanceId" --output text)
-          test -n "$INSTANCE_ID" && [ "$INSTANCE_ID" != "None" ] || { echo "::error::No running EC2 found for ${ENV}"; exit 1; }
+          # Use INSTANCE_ID from compute-reuse output
+          test -n "${INSTANCE_ID:-}" || { echo "::error::INSTANCE_ID missing"; exit 1; }
 
-          # Build remote script safely
-          read -r -d '' REMOTE_SCRIPT <<'EOS'
+          # Build remote script template to file (safe under set -e)
+          cat > /tmp/remote.sh <<'EOS'
           set -e
           cd /home/ubuntu
 
@@ -198,16 +207,17 @@ jobs:
           fi
           EOS
 
-          REMOTE_SCRIPT="${REMOTE_SCRIPT/__ENV__/${ENV}}"
-          REMOTE_SCRIPT="${REMOTE_SCRIPT/__ECR__/${ECR_REPO_URL}}"
-          REMOTE_SCRIPT="${REMOTE_SCRIPT/__TAG__/${TAG_TO_DEPLOY}}"
-          REMOTE_SCRIPT="${REMOTE_SCRIPT/__REGION__/${AWS_REGION}}"
-          REMOTE_SCRIPT="${REMOTE_SCRIPT/__BUCKET__/${BACKUP_BUCKET}}"
+          # Render template with values (use '|' to avoid slash conflicts)
+          sed -e "s|__ENV__|${ENV}|g" \
+              -e "s|__ECR__|${ECR_REPO_URL}|g" \
+              -e "s|__TAG__|${TAG_TO_DEPLOY}|g" \
+              -e "s|__REGION__|${AWS_REGION}|g" \
+              -e "s|__BUCKET__|${BACKUP_BUCKET}|g" /tmp/remote.sh > /tmp/remote.rendered.sh
 
           aws ssm send-command \
             --document-name "AWS-RunShellScript" \
             --instance-ids "$INSTANCE_ID" \
             --comment "Deploy containers with rollback logic" \
-            --parameters commands="$(jq -Rn --arg s "$REMOTE_SCRIPT" '$s')" \
+            --parameters commands="$(jq -Rs . /tmp/remote.rendered.sh)" \
             --timeout-seconds 1200 \
             --region "$AWS_REGION"

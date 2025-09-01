@@ -9,11 +9,12 @@ locals {
 data "terraform_remote_state" "ecr" {
   backend = "s3"
   config = {
-    bucket = local.platform_state_bucket
-    key    = local.platform_ecr_state_key
-    region = local.platform_state_region
+    bucket = var.pm_state_bucket
+    key    = var.pm_ecr_state_key
+    region = var.pm_state_region
   }
 }
+
 
 locals {
   repository_names = try(data.terraform_remote_state.ecr.outputs.repository_names, [])
