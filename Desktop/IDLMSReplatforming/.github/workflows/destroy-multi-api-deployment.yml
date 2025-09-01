@@ -1,0 +1,174 @@
+name: Destroy Multi License API Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      ENV:
+        description: 'Environment to destroy (dev/staging/prod)'
+        required: true
+        default: 'stage'
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  TF_REGION:  ${{ vars.AWS_REGION }}
+  # MUST match deploy bucket naming (includes account id)
+  TF_BUCKET:  ${{ github.event.inputs.ENV }}-btl-idlms-backend-api-tfstate-${{ secrets.AWS_ACCOUNT_ID }}
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.ENV }}
+
+    steps:
+      - name: Checkout feature/btl-77 codebase
+        uses: actions/checkout@v4
+        with:
+          ref: feature/btl-77
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Get AWS Account ID
+        id: aws-account
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "account_id=$ACCOUNT_ID" >> "$GITHUB_OUTPUT"
+
+      # This is the artifact bucket you uploaded docker-compose.yml to in deploy
+      - name: Set dynamic backup bucket name
+        run: echo "BACKUP_BUCKET=idlms-${{ github.event.inputs.ENV }}-built-artifact-${{ steps.aws-account.outputs.account_id }}" >> $GITHUB_ENV
+
+      # ---------- Pre-clean: ECR must be empty before destroy ----------
+      - name: Empty ECR repository (images & tags)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Pull repo name from state output if available; otherwise fall back to a known name/pattern.
+          cd infra/ecr
+          terraform init \
+            -backend-config="bucket=${TF_BUCKET}" \
+            -backend-config="key=${{ github.event.inputs.ENV }}/ecr/terraform.tfstate" \
+            -backend-config="region=${TF_REGION}" \
+            -reconfigure -input=false || true
+
+          # Try to read repo URL from state (best case)
+          if terraform output -raw ecr_repository_url >/dev/null 2>&1; then
+            REPO_URL="$(terraform output -raw ecr_repository_url | tr -d '\r\n')"
+            REPO_NAME="${REPO_URL#*.amazonaws.com/}"
+          else
+            # TODO: replace the fallback with your repo name if you know it exactly
+            REPO_NAME="idlms-${{ github.event.inputs.ENV }}-license-api"
+          fi
+
+          if aws ecr describe-repositories --repository-names "$REPO_NAME" >/dev/null 2>&1; then
+            IMG_JSON=$(aws ecr list-images --repository-name "$REPO_NAME" --query 'imageIds[*]' --output json)
+            if [ "$IMG_JSON" != "[]" ]; then
+              aws ecr batch-delete-image --repository-name "$REPO_NAME" --image-ids "$IMG_JSON"
+            fi
+          fi
+
+      # ---------- Pre-clean: empty S3 artifact buckets if force_destroy=false ----------
+      - name: Empty artifact S3 buckets
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 1) Dynamic artifact bucket used in deploy step
+          CANDIDATES="${BACKUP_BUCKET}"
+
+          # 2) If you also created a static artifact bucket via infra/s3 (example from your tfvars)
+          CANDIDATES="$CANDIDATES stage-idlms-website-built-artifact"
+
+          for B in $CANDIDATES; do
+            if aws s3api head-bucket --bucket "$B" 2>/dev/null; then
+              echo "Emptying bucket: $B"
+              aws s3 rm "s3://$B" --recursive || true
+              # If versioned, remove versions & delete-markers
+              VERS=$(aws s3api list-object-versions --bucket "$B" \
+                --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' --output json 2>/dev/null || echo '[]')
+              DELS=$(aws s3api list-object-versions --bucket "$B" \
+                --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' --output json 2>/dev/null || echo '[]')
+              if [ "$VERS" != "[]" ]; then aws s3api delete-objects --bucket "$B" --delete "$VERS" || true; fi
+              if [ "$DELS" != "[]" ]; then aws s3api delete-objects --bucket "$B" --delete "$DELS" || true; fi
+            fi
+          done
+
+      # ======= Destroy in reverse-dependency order =======
+
+      - name: Destroy CloudWatch
+        run: |
+          cd infra/cloudwatch
+          terraform init \
+            -backend-config="bucket=${TF_BUCKET}" \
+            -backend-config="key=${{ github.event.inputs.ENV }}/cloudwatch/terraform.tfstate" \
+            -backend-config="region=${TF_REGION}" \
+            -reconfigure -input=false
+          terraform destroy -auto-approve -var-file="${{ github.event.inputs.ENV }}.tfvars"
+
+      - name: Destroy API Gateway (tears down VPC Links before NLB)
+        run: |
+          cd infra/rest-api
+          terraform init \
+            -backend-config="bucket=${TF_BUCKET}" \
+            -backend-config="key=${{ github.event.inputs.ENV }}/rest-api/terraform.tfstate" \
+            -backend-config="region=${TF_REGION}" \
+            -reconfigure -input=false
+          terraform destroy -auto-approve -var-file="${{ github.event.inputs.ENV }}.tfvars"
+
+      - name: Destroy NLB
+        run: |
+          cd infra/nlb
+          terraform init \
+            -backend-config="bucket=${TF_BUCKET}" \
+            -backend-config="key=${{ github.event.inputs.ENV }}/nlb/terraform.tfstate" \
+            -backend-config="region=${TF_REGION}" \
+            -reconfigure -input=false
+          terraform destroy -auto-approve -var-file="${{ github.event.inputs.ENV }}.tfvars"
+
+      - name: Destroy VPC (includes EC2 & IAM in that stack)
+        run: |
+          cd infra/vpc
+          terraform init \
+            -backend-config="bucket=${TF_BUCKET}" \
+            -backend-config="key=${{ github.event.inputs.ENV }}/vpc/terraform.tfstate" \
+            -backend-config="region=${TF_REGION}" \
+            -reconfigure -input=false
+          terraform destroy -auto-approve -var-file="${{ github.event.inputs.ENV }}.tfvars"
+
+      - name: Destroy ECR (repo is now empty)
+        run: |
+          cd infra/ecr
+          terraform init \
+            -backend-config="bucket=${TF_BUCKET}" \
+            -backend-config="key=${{ github.event.inputs.ENV }}/ecr/terraform.tfstate" \
+            -backend-config="region=${TF_REGION}" \
+            -reconfigure -input=false
+          terraform destroy -auto-approve -var-file="${{ github.event.inputs.ENV }}.tfvars"
+
+      - name: Destroy SSM
+        run: |
+          cd infra/ssm
+          terraform init \
+            -backend-config="bucket=${TF_BUCKET}" \
+            -backend-config="key=${{ github.event.inputs.ENV }}/ssm/terraform.tfstate" \
+            -backend-config="region=${TF_REGION}" \
+            -reconfigure -input=false
+          terraform destroy -auto-approve -var-file="${{ github.event.inputs.ENV }}.tfvars"
+
+      - name: Destroy S3 (buckets now empty)
+        run: |
+          cd infra/s3
+          terraform init \
+            -backend-config="bucket=${TF_BUCKET}" \
+            -backend-config="key=${{ github.event.inputs.ENV }}/s3/terraform.tfstate" \
+            -backend-config="region=${TF_REGION}" \
+            -reconfigure -input=false
+          terraform destroy -auto-approve -var-file="${{ github.event.inputs.ENV }}.tfvars"

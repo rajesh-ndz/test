@@ -1,0 +1,113 @@
+name: Adopt NLB state (one-off)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ENV:
+        description: 'Environment'
+        required: true
+        default: 'stage'
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
+  TF_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
+
+jobs:
+  adopt-nlb:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+
+      - name: Configure AWS creds
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Get Account ID
+        id: acct
+        run: |
+          echo "account_id=$(aws sts get-caller-identity --query Account --output text)" >> "$GITHUB_OUTPUT"
+
+      - name: Init NLB backend
+        working-directory: infra/nlb
+        env:
+          ENV:        ${{ github.event.inputs.ENV }}
+          ACCOUNT_ID: ${{ steps.acct.outputs.account_id }}
+        run: |
+          set -euo pipefail
+          TF_BUCKET="${ENV}-btl-idlms-backend-api-tfstate-${ACCOUNT_ID}"
+          terraform init \
+            -backend-config="bucket=${TF_BUCKET}" \
+            -backend-config="key=${ENV}/nlb/terraform.tfstate" \
+            -backend-config="region=${{ env.TF_REGION }}" \
+            -reconfigure -input=false
+
+      - name: Import NLB + TGs + listeners (idempotent)
+        working-directory: infra/nlb
+        env:
+          ENV:        ${{ github.event.inputs.ENV }}
+        run: |
+          set -euo pipefail
+
+          TFVARS="${ENV}.tfvars"
+          test -f "$TFVARS" || { echo "Missing ${TFVARS} in infra/nlb"; exit 1; }
+
+          LB_NAME="${ENV}-idlms-nlb"
+          LB_ARN=$(aws elbv2 describe-load-balancers --names "$LB_NAME" \
+            --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || true)
+
+          if [ -n "$LB_ARN" ] && [ "$LB_ARN" != "None" ]; then
+            terraform import -var-file="$TFVARS" 'module.group_1_nlb.aws_lb.this' "$LB_ARN" || true
+          else
+            echo "WARN: Could not find NLB named ${LB_NAME}; skipping NLB import."
+          fi
+
+          # Try the common ports; harmless if some don’t exist
+          for P in 4000 4001 4002; do
+            TG_NAME="${ENV}-idlms-nlb-tg-${P}"
+            TG_ARN=$(aws elbv2 describe-target-groups --names "$TG_NAME" \
+              --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || true)
+            if [ -n "$TG_ARN" ] && [ "$TG_ARN" != "None" ]; then
+              terraform import -var-file="$TFVARS" \
+                "module.group_1_nlb.aws_lb_target_group.multi[\"${P}\"]" "$TG_ARN" || true
+            else
+              echo "INFO: Target group ${TG_NAME} not found; skipping."
+            fi
+          done
+
+          # Import listeners when present
+          if [ -n "${LB_ARN:-}" ] && [ "$LB_ARN" != "None" ]; then
+            for P in 4000 4001 4002; do
+              L_ARN=$(aws elbv2 describe-listeners --load-balancer-arn "$LB_ARN" \
+                --query "Listeners[?Port==\`${P}\`].ListenerArn | [0]" --output text 2>/dev/null || true)
+              if [ -n "$L_ARN" ] && [ "$L_ARN" != "None" ]; then
+                terraform import -var-file="$TFVARS" \
+                  "module.group_1_nlb.aws_lb_listener.this[\"${P}\"]" "$L_ARN" || true
+              else
+                echo "INFO: Listener on port ${P} not found; skipping."
+              fi
+            done
+          fi
+
+      - name: Apply NLB to write outputs
+        working-directory: infra/nlb
+        env:
+          ENV: ${{ github.event.inputs.ENV }}
+        run: |
+          set -euo pipefail
+          terraform apply -auto-approve -var-file="${ENV}.tfvars"
+          echo "--- Outputs ---"
+          terraform output
+

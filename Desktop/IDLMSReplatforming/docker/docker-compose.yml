@@ -1,0 +1,39 @@
+version: "3.8"
+
+services:
+  api1:
+    image: ${IMAGE_REPO}:${BUILD_TAG}
+    container_name: api1
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "${PORT}:${PORT}"
+    environment:
+      - PORT=${PORT}
+    command: node dist/main.js
+
+  api2:
+    image: ${IMAGE_REPO}:${BUILD_TAG}
+    container_name: api2
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "${PORT1}:${PORT1}"
+    environment:
+      - PORT=${PORT1}
+    command: node dist/main.js
+
+  api3:
+    image: ${IMAGE_REPO}:${BUILD_TAG}
+    container_name: api3
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "${PORT2}:${PORT2}"
+    environment:
+      - PORT=${PORT2}
+    command: node dist/main.js
+

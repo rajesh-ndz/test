@@ -1,0 +1,142 @@
+name: Deploy Lambda
+
+on:
+  workflow_dispatch:
+    inputs:
+      ENV:
+        description: 'Environment to deploy (dev/staging/prod)'
+        required: true
+        default: 'dev'
+      ROLLBACK_VERSION:
+        description: 'Lambda version to roll back to (optional)'
+        required: false
+
+jobs:
+  deploy-license-api:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.ENV }}
+
+    env:
+      AWS_REGION: us-east-1
+      ENV: ${{ github.event.inputs.ENV }}
+      FUNCTION_NAME: ${{ github.event.inputs.ENV }}-idlms-lambda
+
+    steps:
+      - name: Checkout `feature/btl-52` codebase
+        uses: actions/checkout@v3
+        with:
+          ref: feature/btl-52
+          fetch-depth: 0
+
+      - name: Short-circuit if rollback version is provided
+        if: ${{ github.event.inputs.ROLLBACK_VERSION != '' }}
+        run: |
+          echo "Rollback version provided: ${{ github.event.inputs.ROLLBACK_VERSION }}. Skipping deployment steps."
+        shell: bash
+
+      - name: Set up Node.js
+        if: ${{ github.event.inputs.ROLLBACK_VERSION == '' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Detect if only `src/` was modified
+        if: ${{ github.event.inputs.ROLLBACK_VERSION == '' }}
+        id: changes
+        run: |
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+          echo "Changed files: $CHANGED_FILES"
+
+          ONLY_SRC_MODIFIED=true
+          for file in $CHANGED_FILES; do
+            if [[ "$file" != src/* ]]; then
+              ONLY_SRC_MODIFIED=false
+              break
+            fi
+          done
+
+          echo "ONLY_SRC_MODIFIED=$ONLY_SRC_MODIFIED" >> $GITHUB_ENV
+          echo "only-src-modified=$ONLY_SRC_MODIFIED" >> $GITHUB_OUTPUT
+
+      - name: Install dependencies
+        if: ${{ github.event.inputs.ROLLBACK_VERSION == '' }}
+        working-directory: ./src
+        run: npm ci
+
+      - name: Build NestJS app
+        if: ${{ github.event.inputs.ROLLBACK_VERSION == '' }}
+        working-directory: ./src
+        run: npm run build
+
+      - name: Package Lambda as ZIP
+        if: ${{ github.event.inputs.ROLLBACK_VERSION == '' }}
+        working-directory: ./src
+        run: |
+          npm prune --production
+          zip -r ../infra/lambda-idlms/backend-api.zip dist node_modules package.json -x "**/*.map" "**/*.d.ts" "**/test/**"
+
+      - name: Set up Terraform
+        if: ${{ github.event.inputs.ROLLBACK_VERSION == '' }}
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Terraform VPC Init & Apply
+        if: ${{ github.event.inputs.ROLLBACK_VERSION == '' && env.ONLY_SRC_MODIFIED != 'true' }}
+        working-directory: ./infra/vpc
+        run: |
+          terraform init
+          terraform apply -auto-approve -var-file=${{ env.ENV }}.tfvars
+
+      - name: Terraform SSM Init & Apply
+        if: ${{ github.event.inputs.ROLLBACK_VERSION == '' }}
+        working-directory: ./infra/ssm
+        run: |
+          terraform init
+          terraform apply -auto-approve -var-file=${{ env.ENV }}.tfvars
+
+      - name: Terraform Lambda Init & Apply
+        if: ${{ github.event.inputs.ROLLBACK_VERSION == '' }}
+        working-directory: ./infra/lambda-idlms
+        run: |
+          terraform init
+          terraform apply -auto-approve -var-file=${{ env.ENV }}.tfvars
+
+      - name: Terraform REST API Init & Apply
+        if: ${{ github.event.inputs.ROLLBACK_VERSION == '' && env.ONLY_SRC_MODIFIED != 'true' }}
+        working-directory: ./infra/api
+        run: |
+          terraform init
+          terraform apply -auto-approve -var-file=${{ env.ENV }}.tfvars
+
+      - name: Capture deployed Lambda version
+        if: ${{ github.event.inputs.ROLLBACK_VERSION == '' }}
+        id: lambda-version
+        run: |
+          VERSION=$(terraform -chdir=./infra/lambda-idlms output -raw function_version)
+          echo "DEPLOYED_VERSION=$VERSION" >> $GITHUB_ENV
+          echo "deployed-version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Save deployed version in SSM
+        if: ${{ github.event.inputs.ROLLBACK_VERSION == '' }}
+        run: |
+          aws ssm put-parameter \
+            --name "/idlms/lambda/${{ env.ENV }}/last-successful-version" \
+            --value "${{ steps.lambda-version.outputs.deployed-version }}" \
+            --type String \
+            --overwrite
+
+      - name: Roll back Lambda alias if version provided
+        if: ${{ github.event.inputs.ROLLBACK_VERSION != '' }}
+        run: |
+          aws lambda update-alias \
+            --function-name ${{ env.FUNCTION_NAME }} \
+            --name live \
+            --function-version ${{ github.event.inputs.ROLLBACK_VERSION }}

@@ -1,0 +1,9 @@
+terraform {
+  backend "s3" {
+    bucket = "idlms-terraform-state-backend"
+    key    = "IDLMSReplatforming/stage/stacks/s3-reuse/terraform.tfstate"
+    region = "ap-south-1"
+    # dynamodb_table = "idlms-terraform-locks"
+    encrypt = true
+  }
+}

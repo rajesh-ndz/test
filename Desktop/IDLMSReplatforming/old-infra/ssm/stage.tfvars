@@ -1,0 +1,6 @@
+environment           = "stage"
+region                = "ap-southeast-1"
+ssm_param_name        = "/idlms/shared/stage/.env"
+ssm_param_description = "Shared environment variables for IDLMS in stage"
+ssm_param_app_tag     = "idlms"
+app_env_content       = ""

@@ -1,0 +1,213 @@
+name: Deploy Multi License API (IDLMS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ENV:
+        description: "Environment (dev/stage/prod)"
+        required: true
+        default: "stage"
+      ROLLBACK_TAG:
+        description: "Optional: deploy this previous image tag instead of building new"
+        required: false
+
+permissions:
+  contents: read
+  id-token: write  # (kept on for easy OIDC switch later)
+
+concurrency:
+  group: deploy-${{ github.event.inputs.ENV }}
+  cancel-in-progress: false
+
+env:
+  # Set this in repo → Settings → Variables → Actions → New Repository variable
+  # Example: ap-south-1
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # build what was triggered (don’t hardcode a branch)
+          ref: ${{ github.ref }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.7
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      # Keep static keys for now (matches your current setup).
+      # Later you can switch to OIDC by removing keys and using a role-to-assume.
+      - name: Configure AWS Credentials (static keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region:            ${{ env.AWS_REGION }}
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Discover account & set artifact bucket
+        id: acct
+        run: |
+          set -euo pipefail
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "ACCOUNT_ID=$ACCOUNT_ID" >> "$GITHUB_ENV"
+          echo "BACKUP_BUCKET=idlms-${{ github.event.inputs.ENV }}-built-artifact-$ACCOUNT_ID" >> "$GITHUB_ENV"
+
+      - name: Refresh reuse stacks (no-change apply)
+        run: |
+          set -euo pipefail
+          ROOT="infra/environments/stage/stacks"
+          for s in network-reuse compute-reuse nlb-reuse ecr-reuse; do
+            if [ -d "$ROOT/$s" ]; then
+              echo "== $s =="
+              terraform -chdir="$ROOT/$s" init -reconfigure -input=false
+              terraform -chdir="$ROOT/$s" plan  -refresh-only -out=tfplan || true
+              terraform -chdir="$ROOT/$s" apply -refresh-only -auto-approve tfplan || true
+              rm -f "$ROOT/$s/tfplan"
+            else
+              echo "skip: $ROOT/$s not present"
+            fi
+          done
+
+      - name: Read ECR repository URL
+        run: |
+          set -euo pipefail
+          OUT_JSON=$(terraform -chdir=infra/environments/stage/stacks/ecr-reuse output -json repository_urls)
+          ECR_REPO_URL=$(jq -r 'if type=="array" then .[0] else . end' <<<"$OUT_JSON")
+          test -n "$ECR_REPO_URL" && [ "$ECR_REPO_URL" != "null" ] || { echo "::error::No ECR repo URL in ecr-reuse outputs"; exit 1; }
+          echo "ECR_REPO_URL=$ECR_REPO_URL" >> "$GITHUB_ENV"
+          echo "Using ECR: $ECR_REPO_URL"
+
+      - name: Upload docker-compose.yml to S3
+        run: aws s3 cp docker/docker-compose.yml "s3://$BACKUP_BUCKET/${{ github.event.inputs.ENV }}/docker-compose.yml"
+
+      - name: Log in to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Generate build tags
+        run: |
+          DATE_TAG=$(date +'%Y.%m.%d')
+          BUILD_NUM=$(printf "%03d" "$GITHUB_RUN_NUMBER")
+          BUILD_TAG="${DATE_TAG}.${BUILD_NUM}"
+          echo "BUILD_TAG=$BUILD_TAG" >> "$GITHUB_ENV"
+          echo "IMAGE_URI=${ECR_REPO_URL}:${BUILD_TAG}" >> "$GITHUB_ENV"
+          echo "LATEST_URI=${ECR_REPO_URL}:latest" >> "$GITHUB_ENV"
+
+      - name: Build image
+        run: docker build -t "$IMAGE_URI" -t "$LATEST_URI" -f docker/Dockerfile src
+
+      - name: Push images
+        run: |
+          docker push "$IMAGE_URI"
+          docker push "$LATEST_URI"
+
+      - name: Decide tag to deploy (supports rollback)
+        run: |
+          if [ -n "${{ github.event.inputs.ROLLBACK_TAG }}" ]; then
+            echo "TAG_TO_DEPLOY=${{ github.event.inputs.ROLLBACK_TAG }}" >> "$GITHUB_ENV"
+          else
+            echo "TAG_TO_DEPLOY=${BUILD_TAG}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Deploy to EC2 via SSM
+        env:
+          ENV:           ${{ github.event.inputs.ENV }}
+          AWS_REGION:    ${{ env.AWS_REGION }}
+          ECR_REPO_URL:  ${{ env.ECR_REPO_URL }}
+          TAG_TO_DEPLOY: ${{ env.TAG_TO_DEPLOY }}
+          BACKUP_BUCKET: ${{ env.BACKUP_BUCKET }}
+        run: |
+          set -euo pipefail
+
+          # Find the EC2 created by platform-main compute stack
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=Backend API IDLMS-${ENV}" "Name=instance-state-name,Values=running" \
+            --query "Reservations[].Instances[].InstanceId" --output text)
+          test -n "$INSTANCE_ID" && [ "$INSTANCE_ID" != "None" ] || { echo "::error::No running EC2 found for ${ENV}"; exit 1; }
+
+          # Build remote script safely
+          read -r -d '' REMOTE_SCRIPT <<'EOS'
+          set -e
+          cd /home/ubuntu
+
+          ENV_NAME="__ENV__"
+          ECR_REPO_URL="__ECR__"
+          TAG_TO_DEPLOY="__TAG__"
+          AWS_REGION="__REGION__"
+          BACKUP_BUCKET="__BUCKET__"
+
+          # Pull .env from SSM (optional but recommended)
+          if aws ssm get-parameter --name "/idlms/shared/${ENV_NAME}/.env" --with-decryption >/dev/null 2>&1; then
+            ENV_CONTENT=$(aws ssm get-parameter --name "/idlms/shared/${ENV_NAME}/.env" --with-decryption --query "Parameter.Value" --output text)
+          else
+            ENV_CONTENT="# placeholder env"
+          fi
+          printf "%s\n" "$ENV_CONTENT" > .env
+          echo "BUILD_TAG=${TAG_TO_DEPLOY}" >> .env
+          echo "IMAGE_REPO=${ECR_REPO_URL}" >> .env
+
+          # Compose file from S3
+          aws s3 cp "s3://${BACKUP_BUCKET}/${ENV_NAME}/docker-compose.yml" docker-compose.yml
+
+          # Docker bits
+          if ! command -v docker >/dev/null 2>&1; then
+            sudo apt-get update -y && sudo apt-get install -y docker.io
+          fi
+          if ! command -v docker-compose >/dev/null 2>&1; then
+            URL="https://github.com/docker/compose/releases/download/v2.28.1/docker-compose-$(uname -s)-$(uname -m)"
+            sudo curl -L "$URL" -o /usr/local/bin/docker-compose
+            sudo chmod +x /usr/local/bin/docker-compose
+          fi
+          aws ecr get-login-password --region "${AWS_REGION}" | docker login --username AWS --password-stdin "${ECR_REPO_URL%/*}"
+
+          CURRENT_IMG="${ECR_REPO_URL}:${TAG_TO_DEPLOY}"
+
+          # Fresh start
+          docker-compose --env-file .env down || true
+          docker rmi "${CURRENT_IMG}" || true
+          docker-compose --env-file .env pull --ignore-pull-failures
+          docker-compose --env-file .env up -d --force-recreate
+
+          # Health check: expect 3 containers (api1, api2, api3)
+          sleep 60
+          RUNNING_CONTAINERS=$(docker ps --format '{{.Names}}' | grep -E "api1|api2|api3" | wc -l)
+          if [ "$RUNNING_CONTAINERS" -ne 3 ]; then
+            echo "Deployment failed. Rolling back..."
+            PREV_TAG=$(aws ssm get-parameter --name "/idlms/license-api/${ENV_NAME}/last-successful-build" --query "Parameter.Value" --output text || echo "")
+            if [ -z "$PREV_TAG" ]; then
+              echo "No last-successful-build found; leaving services down for safety."
+              exit 1
+            fi
+            sed -i "/^BUILD_TAG=/d" .env
+            echo "BUILD_TAG=$PREV_TAG" >> .env
+            PREV_IMG="${ECR_REPO_URL}:${PREV_TAG}"
+            docker-compose --env-file .env down || true
+            docker rmi "${CURRENT_IMG}" || true
+            docker-compose --env-file .env pull --ignore-pull-failures
+            docker-compose --env-file .env up -d --force-recreate
+          else
+            echo "All containers are up. Saving ${TAG_TO_DEPLOY} as last-successful-build..."
+            aws ssm put-parameter --name "/idlms/license-api/${ENV_NAME}/last-successful-build" --value "${TAG_TO_DEPLOY}" --type String --overwrite
+          fi
+          EOS
+
+          REMOTE_SCRIPT="${REMOTE_SCRIPT/__ENV__/${ENV}}"
+          REMOTE_SCRIPT="${REMOTE_SCRIPT/__ECR__/${ECR_REPO_URL}}"
+          REMOTE_SCRIPT="${REMOTE_SCRIPT/__TAG__/${TAG_TO_DEPLOY}}"
+          REMOTE_SCRIPT="${REMOTE_SCRIPT/__REGION__/${AWS_REGION}}"
+          REMOTE_SCRIPT="${REMOTE_SCRIPT/__BUCKET__/${BACKUP_BUCKET}}"
+
+          aws ssm send-command \
+            --document-name "AWS-RunShellScript" \
+            --instance-ids "$INSTANCE_ID" \
+            --comment "Deploy containers with rollback logic" \
+            --parameters commands="$(jq -Rn --arg s "$REMOTE_SCRIPT" '$s')" \
+            --timeout-seconds 1200 \
+            --region "$AWS_REGION"
