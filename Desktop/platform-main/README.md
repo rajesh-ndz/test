@@ -112,9 +112,6 @@ terraform -chdir=infra/environments/stage/stacks/cloudwatch output
 
 # destroy
 terraform -chdir=infra/environments/stage/stacks/cloudwatch init -reconfigure -upgrade
-terraform -chdir=infra/environments/stage/stacks/cloudwatch fmt
-terraform -chdir=infra/environments/stage/stacks/cloudwatch validate
-terraform -chdir=infra/environments/stage/stacks/cloudwatch init -reconfigure -upgrade
 terraform -chdir=infra/environments/stage/stacks/cloudwatch plan -destroy -var-file=stage.tfvars -out=destroy.out
 terraform -chdir=infra/environments/stage/stacks/cloudwatch apply "destroy.out"
 
